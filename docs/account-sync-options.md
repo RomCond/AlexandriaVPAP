@@ -17,7 +17,7 @@ Written 15 November 2026. Prices and limits come from web searches on that date.
 | Preferences | `recordcatalog.prefs.v1` | No | `collectionView`, `sort`, `addFormat`, `vinylOnly`, `discoTypes` and `smallRecords` set how you browse on one screen. A phone shows covers three across, and a PC may show the list. |
 | Discography cache | `recordcatalog.discographies.v5` | No | It is a copy of public MusicBrainz data. Each device fetches it again when needed, and it expires after a week. It is also the largest item in storage. |
 
-One preference could follow you. `smallRecords`, the **Include 45s and 10" records** setting, says what you collect rather than how you browse. It stays on each device unless you ask for it to sync.
+One preference could follow you. `smallRecords`, the **Include 45s and 10" records** setting, says what you collect rather than how you browse. It stays on each device by default, as the section on [two defaults you can change](#two-defaults-you-can-change) explains.
 
 Two smaller things stay on the device as well. A `.unreadable` copy is a recovery file for that browser. The last five random picks live only in memory.
 
@@ -35,20 +35,36 @@ A copy off the device also guards against browser cleanup. WebKit announced in 2
 
 ### Merge one record at a time, never the whole list
 
-Saving one device's whole list over the other's loses records. Today's store already loses records that way. In a Node test, two stores shared one storage, the way two tabs in one browser share `localStorage`. One store added Aja and the other added OK Computer. Only OK Computer was saved, because each store wrote its own whole list. Sync that copies whole lists would lose records the same way.
+Saving one device's whole list over the other's loses records. Before iteration 2 the store lost records that way with two tabs open. In a Node test, two stores shared one storage, the way two tabs in one browser share `localStorage`. One store added Aja and the other added OK Computer. Only OK Computer was saved, because each store wrote its own whole list. Sync that copies whole lists would lose records the same way. Iteration 2 fixed the two-tab case. A tab now reads the lists again when another tab saves them.
 
 The merge follows these rules:
 
-1. Each record and wish carries `updatedAt`, the time it last changed. When both devices hold a copy, the newer copy wins, as a whole record.
-2. A delete leaves a marker with the record's id and the time. The marker beats any copy older than it, so the other device does not bring the record back. An edit made after the delete wins and brings the record back.
+1. Each record and wish carries `updatedAt`, the time it last changed. When both devices hold a copy, the newer copy wins, as a whole record. A record saved before `updatedAt` existed counts from its `addedAt`.
+2. A delete leaves a marker with the id and the time. Removing a wish, getting a wish and taking back a vinyl confirmation leave one too. The marker beats any copy that is not newer than it, so the other device does not bring the record back. An edit made after the delete wins and brings the record back. A delete and an edit at the same moment count as a delete.
 3. You still keep one copy per album. If both devices add the same album while apart, the merge keeps the copy added first and drops the other. Both devices pick the same copy, so they end up equal. Notes typed on the dropped copy go with it.
 4. A wish for an album you own leaves the wishlist, as it does today.
-5. Vinyl confirmations follow rules 1 and 2. Each one is a key that is on or off, with the time it changed.
+5. Vinyl confirmations follow rules 1 and 2. Each one is a key that is on or off, with the time it changed. Confirmations saved before they had times count as older than any change.
 6. The first sync of a device that already has records works like **Import backup**. Albums from either device end up on both. Records that came over in an earlier backup have the same id on both devices, so they match.
 
-The merge is safe to repeat. Merging the same two copies twice gives the same result, so a sync that stops halfway runs again from the start. The times come from each device's clock. A clock that is a few minutes off matters only when both devices edit the same record within those minutes. Deletion markers older than six months can go, and a device that has not synced for longer than that does a first sync again.
+The merge is safe to repeat. Merging the same two copies twice gives the same result, so a sync that stops halfway runs again from the start. The times come from each device's clock. A clock that is a few minutes off matters only when both devices edit the same record within those minutes. Deletion markers stay for now. Removing old ones safely needs to know when each device last synced, so that comes with the sync code.
 
-This branch already adds `updatedAt` to every record and wish. Edits you make from now on carry the time they happened, so the first sync can order them.
+**Import backup** brings back anything in the backup that you deleted. That counts as a change made at the time of the import, so the next sync keeps it instead of deleting it again.
+
+### Two defaults you can change
+
+- **The newer edit wins for the whole record.** The other choice is a merge field by field, which keeps the notes from one device and the format from the other. It handles a rare case at the cost of more rules.
+- **Every preference stays on its own device**, `smallRecords` included. Any preference can sync later by moving it into the sync state.
+
+### What iteration 2 built
+
+Iteration 2 built the rules above in `js/store.js`, with no network code.
+
+- `S.mergeSyncStates(mine, theirs)` is the merge. It is a pure function of the two states.
+- `store.syncState()` returns the records, the wishlist, the vinyl confirmations with their times, and the deletion markers.
+- `store.applySyncState(theirs)` reads another device's state, merges it in, saves the result, and redraws the page only when something changed.
+- `store.reload()` reads the lists again. The app calls it when another tab saves.
+
+One copy per album uses an index instead of comparing every pair of records. Comparing pairs took 2.2 seconds for 3,000 records. The merge takes about 50 milliseconds for two devices with 3,000 records each. Both numbers were measured in Node on the development machine.
 
 ## Four ways to sync
 
@@ -103,9 +119,9 @@ The cost is that Google holds a readable copy of your collection. If privacy mat
 
 ## What the next iterations build
 
-These iterations assume Firebase. Iteration 2 is the same under every option.
+Iteration 2 is the same under every option, and it is built. The later iterations assume Firebase.
 
-1. **Iteration 2. Merge in `store.js`, with no network.** Add deletion markers for records, wishes and confirmations. Add a pure merge function that follows the rules above, plus `store.syncState()` and `store.applySyncState()`. Reload from `localStorage` when another tab saves, which fixes the two-tab loss on its own. Unit tests cover every merge rule, a repeated merge, and one copy per album.
+1. **Iteration 2. Merge in `store.js`, with no network.** Built. See [what iteration 2 built](#what-iteration-2-built).
 2. **Iteration 3. Firebase sign-in and sync.** Add `js/sync-config.js` with placeholders that you fill in, `js/sync.js`, and `firestore.rules`. Put **Sign in to sync** on the Collection page next to **Export backup**, with a status line such as "Synced 2 minutes ago" or "Offline. Changes will sync later." Browser tests run against a fake sync service, the same way they fake MusicBrainz today.
 3. **Iteration 4. First sync and live updates.** Merge on first sign-in, then sync when the app opens, when it comes back into view, and a few seconds after each change. Add **Sign out**. Document sync in the README. You check it on your own phone and PC with your own account.
 
@@ -125,4 +141,4 @@ A web search on 15 November 2026 found the pages below. This environment could n
 
 This session did not check Firestore's 1 MiB document limit or Google's unverified-app warning in test mode.
 
-Two numbers come from this repo. A record with every field filled is 420 bytes of JSON. Two stores that share one storage keep only the list of the store that saved last.
+Four numbers come from this repo. A record with every field filled is 420 bytes of JSON. Before iteration 2, two stores that shared one storage kept only the list of the store that saved last. Comparing every pair of records took 2.2 seconds for 3,000 records. The merge takes about 50 milliseconds for two devices with 3,000 records each.
