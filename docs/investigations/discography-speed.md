@@ -189,6 +189,14 @@ Pressings found, against the complete lists from iteration 1 (measured):
 
 A new unit test fakes a search that returns tied results in a new order on each page. The old loader found 215 of 300 pressings with it. The new one finds all 300.
 
+## Iteration 3: saved copies first
+
+A saved discography now shows at once for up to four weeks. Once it's a week old, a new copy loads behind it and takes its place when complete. Refresh works the same way. After four weeks the copy is deleted and the artist loads from scratch, the age at which the app already deleted saved copies.
+
+- Repeat visit, any age up to four weeks: the list shows before any request (measured in the browser test, which holds back MusicBrainz's answer while it checks the page).
+- The refresh behind it costs the same requests as a first load: 18 for Bowie and 25 for the Beatles (estimated from iteration 2's live counts). Nobody waits for them.
+- Only the artist on screen is refreshed. Nothing loads for other artists in the background.
+
 ## Reproducing
 
 ```sh
