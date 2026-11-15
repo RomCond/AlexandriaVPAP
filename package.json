@@ -9,6 +9,7 @@
     "test:e2e": "node --test tests/app.e2e.test.js"
   },
   "devDependencies": {
+    "barcode-detector": "3.2.3",
     "playwright": "1.63.0"
   }
 }

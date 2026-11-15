@@ -654,12 +654,13 @@
 
   const SCAN_HINT_MS = 8000;
   const SCAN_HINT = "Nothing read yet. Fill the frame with the barcode, hold it flat and still, and find good light. Or tap Cancel and type the numbers under it.";
-  const CAMERA_ERRORS = {
+  const SCAN_ERRORS = {
     NotAllowedError: 'The camera is blocked for this site. Allow it in your browser settings and tap Scan barcode again, or type the barcode.',
     NotFoundError: 'No camera found. Type the barcode instead.',
     NotReadableError: 'Another app is using the camera. Close it and tap Scan barcode again.',
+    NetworkError: "Couldn't load the barcode reader. Check your connection and tap Scan barcode again, or type the barcode.",
   };
-  const CAMERA_FAILED = "Couldn't start the camera. Type the barcode instead.";
+  const SCAN_FAILED = "Scanning didn't work in this browser. Type the barcode instead.";
   let scanController = null;
   let scanHintTimer = null;
 
@@ -676,7 +677,7 @@
     } catch (e) {
       if (controller.signal.aborted) return;
       stopScan();
-      setStatus('#search-status', CAMERA_ERRORS[e.name] || CAMERA_FAILED, 'error');
+      setStatus('#search-status', SCAN_ERRORS[e.name] || SCAN_FAILED, 'error');
     }
   }
 
@@ -1310,7 +1311,7 @@
 
   $('#search-form').addEventListener('submit', onSearchSubmit);
   $('#search-form').elements.q.addEventListener('input', onSearchInput);
-  scanner.supported().then((yes) => { $('#scan-btn').hidden = !yes; });
+  $('#scan-btn').hidden = !scanner.supported();
   $('#scan-btn').addEventListener('click', scan);
   $('#scan-cancel').addEventListener('click', stopScan);
   $('#scan-dialog').addEventListener('cancel', stopScan); // Escape, or the back gesture on Android
