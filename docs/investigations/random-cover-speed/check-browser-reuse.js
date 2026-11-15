@@ -60,8 +60,11 @@ async function main() {
   const browser = await chromium.launch();
   const results = [];
   try {
+    // ROUTED=1 turns on Playwright routing for a URL nothing asks for. Playwright says routing turns
+    // the HTTP cache off, so this shows whether tests that use page.route can see reuse at all.
     for (const variant of ['cached', 'uncached']) {
       const context = await browser.newContext();
+      if (process.env.ROUTED) await context.route('**/never-requested', (route) => route.abort());
       const page = await context.newPage();
       await page.goto(page0);
       const load = (src, opts = {}) => page.evaluate(({ src, opts }) => new Promise((resolve) => {

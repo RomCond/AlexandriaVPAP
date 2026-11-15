@@ -130,7 +130,9 @@
   }
 
   // Cover Art Archive sizes in pixels, about 3x the size shown so covers stay sharp on phone screens.
-  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [1200, 500] };
+  // The big random pick stacks two: the 500px cover underneath, which the collection has often loaded
+  // already so it shows at once, and the 1200px one on top, which fades in when it arrives.
+  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [500, 1200] };
   // Covers that have loaded once show straight away when a list is drawn again, instead of fading in.
   const loadedCovers = new Set();
 
@@ -144,21 +146,21 @@
     placeholder.style.setProperty('--label', labelColor(item));
     box.append(placeholder);
     if (item.releaseGroupId) {
-      const sizes = COVER_SIZES[size];
-      let attempt = 0;
-      const img = h('img', { src: mb.coverUrl(item.releaseGroupId, sizes[0]), alt: '', loading: 'lazy', decoding: 'async' });
-      if (loadedCovers.has(img.src)) box.classList.add('loaded');
-      img.addEventListener('load', () => {
-        loadedCovers.add(img.src);
-        box.classList.add('loaded');
-      });
-      // Try the next size down if the big one isn't there, then leave the placeholder showing.
-      img.addEventListener('error', () => {
-        attempt += 1;
-        if (attempt < sizes.length) img.src = mb.coverUrl(item.releaseGroupId, sizes[attempt]);
-        else img.remove();
-      });
-      box.append(img);
+      for (const px of COVER_SIZES[size]) {
+        const img = h('img', { src: mb.coverUrl(item.releaseGroupId, px), alt: '', loading: 'lazy', decoding: 'async' });
+        const show = () => {
+          img.classList.add('shown');
+          box.classList.add('loaded');
+        };
+        if (loadedCovers.has(img.src)) show();
+        img.addEventListener('load', () => {
+          loadedCovers.add(img.src);
+          show();
+        });
+        // A size that isn't there leaves the other size, or the placeholder, showing.
+        img.addEventListener('error', () => img.remove());
+        box.append(img);
+      }
     }
     return box;
   }
