@@ -1,6 +1,6 @@
 # Add search: a smarter box or artist and album toggles
 
-Iteration 1 of the investigation. November 2026. The scripts, query set and saved MusicBrainz replies are in [add-search/](add-search/).
+Iterations 1 and 2 of the investigation. November 2026. The scripts, query set and saved MusicBrainz replies are in [add-search/](add-search/).
 
 ## The short answer
 
@@ -12,6 +12,26 @@ Keep one search box and make it smarter. Don't add toggles.
 - On **10 fresh queries** that I didn't use for tuning, today's search gets 7 and the smarter box gets 10.
 - Toggles get **24 of 26** at best, and only if people always pick the right mode and type only that part. They add a control and a choice to every search.
 - The ranking part, with no UI change, is on this branch to try.
+
+## Iteration 2: the artist row is built
+
+The answers to iteration 1's questions:
+
+- The ranking change stays on this branch. It can ship before the artist row or with it.
+- The row is one slim line above the albums, like "Radiohead · Artist · See all albums", with no cover.
+- Tapping it opens the artist's page in the Discography tab.
+- The row shows even when the text is also an album title.
+- Toggles are dropped.
+- `cache.json.gz` stays on this branch and is dropped before anything merges to main.
+
+What's on the branch now:
+
+- `search()` in `js/musicbrainz.js` returns `artist` next to the albums, using the rules scored as smart+found-artist. The artist comes from the pressings the search already found, so there's no extra request. A barcode search returns no artist.
+- The Add page shows the row above the albums. A tap switches to the Discography tab and calls `loadDiscography` with the artist's MusicBrainz id, the same call the tab's own artist search makes. The discography code is unchanged.
+- `check-app.js` runs the app's search on all 36 queries from the saved replies. The albums match smart and the row matches smart+found-artist on all 36, so the app scores **26 of 26** on the main set and **10 of 10** on the fresh set.
+- New unit tests cover the whole name, the words at the start, a typo, a surname, "Toner Low" not matching "low", a credited name, and no artist for a barcode. A new browser test covers the row, the tap, phone width and a barcode search. `npm test` passes 54 and `npm run test:e2e` passes 5.
+
+**Not done: rescoring with 45s and 10" records on.** With that setting on, the app sends a different query, and none of those replies are saved, so it can't be done offline. `SMALL=1 node eval.js` runs it. It needs 36 new requests for the app's search, or 72 to compare with today's search too.
 
 ## How it was tested
 
@@ -411,7 +431,7 @@ I'd pick the smarter box. It wins on the numbers without assuming people use a c
 ## Recommendation
 
 1. **Ship the ranking changes first.** Use the smart query and the re-rank by pressings in `searchReleaseGroups`, with no UI change. That takes the main set from 15 to 21 and the fresh set from 7 to 10. It still makes one call per search. **This branch already has it**, so you can try it in the app now. `check-app.js` confirms the app returns the same top 5 as the smart approach for all 36 queries.
-2. **Then add the found-artist row.** It takes the main set to 26 of 26. It needs a small UI decision (questions below) and no extra call.
+2. **Then add the found-artist row.** It takes the main set to 26 of 26 and needs no extra call. Built in iteration 2.
 3. **Don't add toggles.** At their best they score below the smarter box, and they add a step to every search.
 
 ## Caveats
@@ -423,6 +443,13 @@ I'd pick the smarter box. It wins on the numbers without assuming people use a c
 
 ## Questions for the user
 
+### Open, from iteration 2
+
+1. **Which name should the row show?** It shows the artist's name as MusicBrainz files it, the same as the Discography tab. So "takanaka" shows "高中正義", while the records credit "Masayoshi Takanaka". Recommended: show the credited name that matched what was typed, since that's what the person recognizes.
+2. **Spend requests on the 45s and 10" rescore?** It needs 36 requests for the app's search, or 72 with today's search for comparison. Recommended: 36, the app's search only, one at a time.
+
+### Answered after iteration 1
+
 1. **Should the ranking change ship on its own first?** It has no UI change, and it's on this branch to try. Recommended: yes.
 2. **What should the artist row look like?** Recommended: one slim line above the albums, like "Radiohead · Artist · See all albums", with no cover.
 3. **Where should tapping the artist row go?** Recommended: the artist's page in the Discography tab. It lists every album and already adds records. The first load of a big catalog takes 20 to 50 seconds. The other option is an inline list on the Add page, which is one call and fast but misses albums for big catalogs.
@@ -432,11 +459,11 @@ I'd pick the smarter box. It wins on the numbers without assuming people use a c
 
 ## Next iterations
 
-1. Build the artist row once the look and the destination are settled, with an e2e test. The ranking change is already on this branch, with unit tests.
-2. Try the ranking change on real use for a while, and note any search that feels wrong. Those become test queries.
+1. Done in iteration 2: the artist row, with unit and browser tests.
+2. Try the search in real use for a while, and note any search that feels wrong. Those become test queries.
 3. Grow the fresh set to 30 or more queries, ideally from records the user owns, and rerun all approaches on it.
 4. Cut wrong artist rows. One idea: hide the row when an album titled exactly like the text is by a different artist that has many more pressings.
-5. Check the 45s and 10" setting. All runs here had it off.
+5. Check the 45s and 10" setting. All runs here had it off, and it needs new requests (see iteration 2).
 
 ## Rerunning
 
@@ -450,7 +477,7 @@ node report.js summary current smart  # print a table; also: cases, matrix, deta
 
 Without `OFFLINE=1`, a missing reply is fetched one request at a time, 3 seconds apart, with the `recordcatalogapp-dev/0.1` User-Agent, and saved to `cache.json.gz`.
 
-The approaches run on the app's search code as it was before this work (commit `bf604df`), so "current" stays today's search. `node check-app.js` runs the app as it is now and checks it against the recorded smart results.
+The approaches run on the app's search code as it was before this work (commit `bf604df`), so "current" stays today's search. `node check-app.js` runs the app as it is now and checks its albums against the recorded smart results and its artist row against smart+found-artist. `SMALL=1` turns on 45s and 10" records and writes `results-small.json`; those replies aren't saved yet, so it fetches.
 
 | File | What it holds |
 |---|---|
@@ -459,7 +486,7 @@ The approaches run on the app's search code as it was before this work (commit `
 | `truth.js` | Prints the artist matches the ids in `truth.json` were picked from. |
 | `eval.js` | The approaches and the scoring. |
 | `appmb.js` | Loads the app's `js/musicbrainz.js` with fetch pointed at the saved replies. |
-| `check-app.js` | Checks that the app's search now returns what the smart approach scored. |
+| `check-app.js` | Checks that the app's search now returns what smart and smart+found-artist scored. |
 | `mbcache.js` | Fetches and saves replies. |
 | `report.js` | Prints the tables in this page. |
 | `results.json`, `results-holdout.json` | Scores and the top 5 for each approach and query. |
