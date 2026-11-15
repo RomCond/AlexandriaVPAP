@@ -575,15 +575,15 @@ test('the random pick shows the 500px cover while the 1200px one loads', { skip:
     await page.reload();
     const shown = () => page.locator('#spin-sleeve img.shown').evaluateAll((imgs) => imgs.map((img) => img.src.split('/').pop()));
 
-    // Opened straight on Random, so nothing has loaded Kid A's cover yet. Both sizes are asked for,
-    // the 500px one shows first, and the 1200px one goes on top when it arrives.
+    // Opened straight on Random, so nothing has loaded Kid A's cover yet, and its color hasn't been
+    // read. Only the 1200px cover is asked for, so it doesn't share the connection with two others.
+    const calls = (size) => coverCalls.filter((url) => url.endsWith(`/rg-kida/front-${size}`)).length;
     assert.ok(!coverCalls.some((url) => url.includes('/rg-kida/')));
     await page.selectOption('#random-format', 'Double LP');
     await page.click('#spin-btn');
     await page.locator('#spin-sleeve img.shown').waitFor();
-    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
-    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
-    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+    assert.deepEqual(await shown(), ['front-1200']);
+    assert.equal(calls(500), 0);
 
     // The cover's main color is kept with the record. After a reload the card takes it at once,
     // without reading the cover again.
@@ -592,14 +592,20 @@ test('the random pick shows the 500px cover while the 1200px one loads', { skip:
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
     assert.equal(saved, await tint());
     await page.reload();
-    const colorReads = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-250')).length;
-    const readsBefore = colorReads();
+    const colorReads = calls(250);
     await page.selectOption('#random-format', 'Double LP');
     await page.click('#spin-btn');
     assert.equal(await tint(), saved);
-    assert.equal(colorReads(), readsBefore, 'no second read of the cover');
+    assert.equal(calls(250), colorReads, 'no second read of the cover');
 
-    // Without a 1200px cover, the 500px one stays
+    // With no color to read, both sizes are asked for. The 500px one shows first, and the 1200px
+    // one goes on top when it arrives.
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
+    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
+    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+
+    // Without a 1200px cover, the 500px one takes its place
     await page.selectOption('#random-format', 'LP');
     await page.click('#spin-btn');
     assert.equal(await text(page, '.pick-title'), 'OK Computer');

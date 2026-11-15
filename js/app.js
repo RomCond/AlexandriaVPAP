@@ -135,9 +135,7 @@
   }
 
   // Cover Art Archive sizes in pixels, about 3x the size shown so covers stay sharp on phone screens.
-  // The big random pick stacks two: the 500px cover underneath, which the collection has often loaded
-  // already so it shows at once, and the 1200px one on top, which fades in when it arrives.
-  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [500, 1200] };
+  const COVER_SIZES = { sm: 500, md: 500, grid: 500, lg: 1200 };
   // Covers that have loaded once show straight away when a list is drawn again, instead of fading in.
   const loadedCovers = new Set();
 
@@ -151,8 +149,9 @@
     placeholder.style.setProperty('--label', labelColor(item));
     box.append(placeholder);
     if (item.releaseGroupId) {
-      for (const px of COVER_SIZES[size]) {
-        const img = h('img', { src: mb.coverUrl(item.releaseGroupId, px), alt: '', loading: 'lazy', decoding: 'async' });
+      const url = (px) => mb.coverUrl(item.releaseGroupId, px);
+      const add = (px, fallback) => {
+        const img = h('img', { src: url(px), alt: '', loading: 'lazy', decoding: 'async' });
         const show = () => {
           img.classList.add('shown');
           box.classList.add('loaded');
@@ -162,9 +161,23 @@
           loadedCovers.add(img.src);
           show();
         });
-        // A size that isn't there leaves the other size, or the placeholder, showing.
-        img.addEventListener('error', () => img.remove());
+        // Without this size, try the fallback, then leave the placeholder showing.
+        img.addEventListener('error', () => {
+          img.remove();
+          if (fallback) add(fallback);
+        });
         box.append(img);
+      };
+      const px = COVER_SIZES[size];
+      // The big random pick lays its sharp cover over the 500px one, which shows first: at once when
+      // the collection has already loaded it, or sooner because it is smaller. While the cover's
+      // color is still being read, though, a third download slowed the sharp cover by about half a
+      // second on 4G, so then it asks for 1200px alone (docs/investigations/random-cover-speed.md).
+      if (px > 500 && (loadedCovers.has(url(500)) || item.coverColor)) {
+        add(500);
+        add(px);
+      } else {
+        add(px, px > 500 ? 500 : null);
       }
     }
     return box;
