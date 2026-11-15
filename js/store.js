@@ -339,31 +339,66 @@
   ];
   const formatFromColumn = (value) => (COLUMN_FORMATS.find(([, pattern]) => pattern.test(value)) || [null])[0];
 
-  // The names a spreadsheet's first row might give each column, compared after fold and squash.
-  const COLUMNS = {
-    artist: ['artist', 'artists', 'artist name', 'album artist', 'band', 'performer'],
-    title: ['title', 'album', 'album title', 'album name', 'record', 'release', 'release title'],
-    year: ['year', 'release year', 'released', 'release date'],
-    format: ['format', 'media', 'medium'],
-    notes: ['notes', 'note', 'comments', 'comment'],
-    label: ['label', 'record label'],
-    catalog: ['catalog', 'catalog number', 'catalog no', 'catalogue', 'catalogue number', 'catalogue no', 'cat no', 'catno'],
-    condition: ['condition', 'media condition', 'record condition'],
-  };
-  // Columns kept in a record's notes, and the name each gets there, as in "Label: Mercury".
-  const NOTE_COLUMNS = { label: 'Label', catalog: 'Catalog number', condition: 'Condition' };
   const DELIMITERS = [',', '\t', ';'];
-  const YEAR_IN_DATE = /\b(?:19|20)\d\d\b/;
+  const yearIn = (text) => (/\b(?:19|20)\d\d\b/.exec(text) || [''])[0];
+  // "Very Good Plus (VG+)" is VG+.
+  const grade = (condition) => (/\(([^()]+)\)\s*$/.exec(condition) || [null, condition])[1];
 
-  // Which column holds each field, or null unless the header row names an artist and a title column.
+  /*
+   * How a spreadsheet lays out its columns: when its first row fits, the names that row may give each
+   * field (compared after fold and squash), the fields kept in a record's notes with the name each gets
+   * there, as in "Label: Mercury", and how to clean up an artist's name. The first layout that fits is used.
+   */
+  const LAYOUTS = [
+    {
+      // Discogs' collection export: Catalog#, Artist, Title, Label, Format, Rating, Released, release_id,
+      // CollectionFolder, Date Added, Collection Media Condition, Collection Sleeve Condition, Collection Notes.
+      // Released is when that pressing came out, so MusicBrainz gives the year instead.
+      app: 'Discogs',
+      fits: (names) => names.includes('release id') && names.includes('collectionfolder'),
+      columns: {
+        artist: ['artist'],
+        title: ['title'],
+        format: ['format'],
+        notes: ['collection notes'],
+        label: ['label'],
+        catalog: ['catalog'],
+        pressed: ['released'],
+        media: ['collection media condition'],
+        sleeve: ['collection sleeve condition'],
+      },
+      notes: [['label', 'Label'], ['catalog', 'Catalog number'], ['pressed', 'Pressing year', yearIn], ['media', 'Media condition', grade], ['sleeve', 'Sleeve condition', grade]],
+      // Discogs tells apart artists with the same name by a number, like "Nirvana (2)".
+      artist: (name) => name.replace(/\s\(\d+\)/g, ''),
+    },
+    {
+      app: null,
+      fits: () => true,
+      columns: {
+        artist: ['artist', 'artists', 'artist name', 'album artist', 'band', 'performer'],
+        title: ['title', 'album', 'album title', 'album name', 'record', 'release', 'release title'],
+        year: ['year', 'release year', 'released', 'release date'],
+        format: ['format', 'media', 'medium'],
+        notes: ['notes', 'note', 'comments', 'comment'],
+        label: ['label', 'record label'],
+        catalog: ['catalog', 'catalog number', 'catalog no', 'catalogue', 'catalogue number', 'catalogue no', 'cat no', 'catno'],
+        condition: ['condition', 'media condition', 'record condition'],
+      },
+      notes: [['label', 'Label'], ['catalog', 'Catalog number'], ['condition', 'Condition']],
+      artist: (name) => name,
+    },
+  ];
+
+  // The layout and which column holds each field, or null unless the header row names an artist and a title column.
   function readHeader(cells) {
+    const names = cells.map((cell) => squash(fold(cell)));
+    const layout = LAYOUTS.find((candidate) => candidate.fits(names));
     const at = {};
-    cells.forEach((cell, index) => {
-      const name = squash(fold(cell));
-      const field = Object.keys(COLUMNS).find((key) => COLUMNS[key].includes(name));
+    names.forEach((name, index) => {
+      const field = Object.keys(layout.columns).find((key) => layout.columns[key].includes(name));
       if (field && !(field in at)) at[field] = index;
     });
-    return 'artist' in at && 'title' in at ? at : null;
+    return 'artist' in at && 'title' in at ? { layout, at } : null;
   }
 
   // Splits CSV or TSV text into rows of cells. A quoted cell can hold the delimiter, a line break, or "" for a quote.
@@ -406,14 +441,20 @@
 
   /*
    * Reads a spreadsheet's rows of cells whose first row names the columns, or returns null when that
-   * row names no artist and title column. Returns { columns: [name], ignored: [name], items,
-   * unreadable: [row], notVinyl: [row], merged }, where columns are the ones read and ignored are the rest.
+   * row names no artist and title column. Returns { app, columns: [name], ignored: [name], items,
+   * unreadable: [row], notVinyl: [row], merged }, where app names the app that exported it, if known,
+   * columns are the ones read and ignored are the rest.
    */
   function readTable(rows) {
     const [head, ...body] = rows.filter((cells) => cells.some((cell) => cell.trim()));
-    const at = head && readHeader(head);
-    if (!at) return null;
+    const header = head && readHeader(head);
+    if (!header) return null;
+    const { layout, at } = header;
     const cell = (cells, field) => (field in at ? (cells[at[field]] || '').trim() : '');
+    const note = (cells, [field, name, clean = (value) => value]) => {
+      const value = clean(cell(cells, field));
+      return value && `${name}: ${value}`;
+    };
     const entries = [];
     const unreadable = [];
     const notVinyl = [];
@@ -423,17 +464,18 @@
         continue;
       }
       const entry = readEntry({
-        artist: cell(cells, 'artist'),
+        artist: layout.artist(cell(cells, 'artist')),
         title: cell(cells, 'title'),
-        year: (YEAR_IN_DATE.exec(cell(cells, 'year')) || [null])[0],
+        year: yearIn(cell(cells, 'year')),
         format: formatFromColumn(cell(cells, 'format')),
-        notes: [cell(cells, 'notes'), ...Object.entries(NOTE_COLUMNS).map(([field, name]) => cell(cells, field) && `${name}: ${cell(cells, field)}`)],
+        notes: [cell(cells, 'notes'), ...layout.notes.map((field) => note(cells, field))],
       });
       if (entry) entries.push(entry);
       else unreadable.push(rowText(cells));
     }
     const used = Object.values(at);
     return {
+      app: layout.app,
       columns: head.filter((name, index) => used.includes(index)).map((name) => name.trim()),
       ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
       ...foldRepeats(entries),
@@ -491,9 +533,9 @@
 
   /*
    * Reads pasted text or what fileContent read from a file, whichever kind it is:
-   *   { kind: 'backup', records, wishlist, vinylConfirmed }                     a Record Catalog backup, for importBackup
-   *   { kind: 'table', columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
-   *   { kind: 'list', items, unreadable, merged }                               one "Artist - Title" per line
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          a Record Catalog backup, for importBackup
+   *   { kind: 'table', app, columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
+   *   { kind: 'list', items, unreadable, merged }                                    one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
    * A sheet's rows without column names read like its columns pasted in, as a list.
    * Throws when text that starts like a backup isn't one.

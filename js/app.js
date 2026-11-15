@@ -1046,7 +1046,10 @@
     const items = store.notInCollection(read.items);
     const owned = read.items.length - items.length;
     const notes = [];
-    if (read.kind === 'table') notes.push(`Read the ${columnNames(read.columns)}${read.ignored.length ? ` and left out the ${columnNames(read.ignored)}` : ''}.`);
+    if (read.kind === 'table') {
+      const from = read.app ? ` of this ${read.app} export` : '';
+      notes.push(`Read the ${columnNames(read.columns)}${from}${read.ignored.length ? ` and left out the ${columnNames(read.ignored)}` : ''}.`);
+    }
     if (owned) notes.push(`${plural(owned, 'record')} already in your collection ${owned === 1 ? 'is' : 'are'} skipped.`);
     if (read.merged) notes.push(`${plural(read.merged, unit)} named an album already on the list, so ${read.merged === 1 ? 'it was' : 'they were'} combined into one record with a note like "2 copies".`);
     const summary = [];

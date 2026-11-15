@@ -423,6 +423,35 @@ test('readImport keeps label, catalog number and condition columns in the notes'
   const read = S.readImport('Artist,Title,Record Label,Cat. No.,Media Condition,Comments\nRush,2112,Mercury,SRM-1-1079,VG+,Gatefold\nRush,Signals,,,,');
   assert.deepEqual(read.ignored, []);
   assert.deepEqual(read.items.map((item) => item.notes), ['Gatefold; Label: Mercury; Catalog number: SRM-1-1079; Condition: VG+', '']);
+  assert.equal(read.app, null);
+});
+
+// A Discogs collection export, written from memory and from the columns other projects' parsers read.
+// A real export is needed to confirm the columns and the values.
+const DISCOGS_EXPORT = [
+  'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+  'AA-1006,Steely Dan,Aja,ABC Records,"LP, Album, Gat",,1977,1234567,Uncategorized,2023-01-05 10:00:00,Very Good Plus (VG+),Very Good (VG),Signed',
+  'SRM-1-4013,Rush,Moving Pictures,Anthem,"2xLP, Album, RE, 180",5,2015-03-30,7654321,Uncategorized,2023-01-06 10:00:00,Mint (M),Generic,',
+  'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,,,',
+  'KCS 9914,Simon & Garfunkel,Bridge Over Troubled Water,Columbia,"CD, Album",,1970,2222222,Uncategorized,2023-01-08 10:00:00,,,',
+].join('\n');
+
+test('readImport reads a Discogs collection export', () => {
+  const read = S.readImport(DISCOGS_EXPORT);
+  assert.deepEqual([read.kind, read.app], ['table', 'Discogs']);
+  assert.deepEqual(read.ignored, ['Rating', 'release_id', 'CollectionFolder', 'Date Added']);
+  assert.deepEqual(read.notVinyl, ['KCS 9914, Simon & Garfunkel, Bridge Over Troubled Water, Columbia, CD, Album, 1970, 2222222, Uncategorized, 2023-01-08 10:00:00']);
+  assert.deepEqual(read.items, [
+    {
+      artist: 'Steely Dan', title: 'Aja', year: null, format: 'LP',
+      notes: 'Signed; Label: ABC Records; Catalog number: AA-1006; Pressing year: 1977; Media condition: VG+; Sleeve condition: VG',
+    },
+    {
+      artist: 'Rush', title: 'Moving Pictures', year: null, format: 'Double LP',
+      notes: 'Label: Anthem; Catalog number: SRM-1-4013; Pressing year: 2015; Media condition: M; Sleeve condition: Generic',
+    },
+    { artist: 'Nirvana', title: 'Nevermind', year: null, format: 'LP', notes: 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991' },
+  ], 'no year, so MusicBrainz fills in the original one, and the " (2)" Discogs adds to tell artists apart is gone');
 });
 
 test('readImport reads TSV and semicolon CSV, and lines without column names as a typed list', () => {

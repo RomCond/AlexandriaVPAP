@@ -714,6 +714,18 @@ test('imports spreadsheets saved as Excel or CSV, and says what to do with a Num
     assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', 'Label: One Little Indian'], 'no format in the file, so Add as decides');
     await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
 
+    // A Discogs collection export, pasted. Its columns are from memory and other parsers, not a real export.
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', [
+      'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+      'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,Very Good Plus (VG+),,',
+    ].join('\n'));
+    assert.match(await text(page, '#import-summary'), /1 record to add\.[\s\S]*Collection Notes columns of this Discogs export and left out the Rating, release_id, CollectionFolder and Date Added columns\./);
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 1 record' }).waitFor();
+    const nevermind = (await records()).find((r) => r.title === 'Nevermind');
+    assert.deepEqual([nevermind.artist, nevermind.year, nevermind.notes], ['Nirvana', null, 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991; Media condition: VG+']);
+
     assert.deepEqual(errors, []);
     await context.close();
   } finally {
