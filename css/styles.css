@@ -840,6 +840,7 @@ button.wished {
 }
 
 .import-help { margin: 8px 0 14px; }
+.import-help q { white-space: nowrap; }
 
 .import-chosen {
   display: flex;
