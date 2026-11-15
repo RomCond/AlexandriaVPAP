@@ -117,6 +117,36 @@ test('an album with many pressings outranks a lone pressing that matches slightl
   assert.deepEqual(results.map((r) => r.artist), ['Fleetwood Mac', 'The Rumours']);
 });
 
+test('search names the artist whose name was typed, from the pressings it found', async (t) => {
+  const credited = (release, name, id, as = name) => ({ ...release, 'artist-credit': [{ name: as, artist: { id, name } }] });
+  const album = (id, title) => ({ id, title, type: 'Album' });
+  let releases = [];
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse({ releases }));
+
+  releases = [
+    credited(pressing('r1', album('tribute', 'Radiohead')), 'Cage', 'a-cage'),
+    credited(pressing('r2', album('vs', 'Greenhouse Effect vs. Radiohead')), 'Greenhouse Effect vs. Radiohead', 'a-vs'),
+    credited(pressing('r3', album('okc', 'OK Computer')), 'Radiohead', 'a-rh'),
+  ];
+  assert.deepEqual((await mb.search('radiohead')).artist, { id: 'a-rh', name: 'Radiohead' }, 'the whole text');
+  assert.deepEqual((await mb.search('radiohead kid')).artist, { id: 'a-rh', name: 'Radiohead' }, 'the words at the start');
+  assert.deepEqual((await mb.search('radiohed ok computer')).artist, { id: 'a-rh', name: 'Radiohead' }, 'one typo');
+  assert.equal((await mb.search('ok computer')).artist, null, 'nobody is called OK Computer');
+
+  releases = [
+    credited(pressing('r1', album('low-band', 'Things We Lost in the Fire')), 'Low', 'a-low'),
+    ...['r2', 'r3'].map((id) => credited(pressing(id, album('toner', 'Toner Low')), 'Toner Low', 'a-toner')),
+    ...['r4', 'r5', 'r6'].map((id) => credited(pressing(id, album('low-bowie', 'Low')), 'David Bowie', 'a-bowie')),
+    credited(pressing('r7', album('glass', '"Low" Symphony')), 'Philip Glass', 'a-glass'),
+  ];
+  assert.deepEqual((await mb.search('bowie low')).artist, { id: 'a-bowie', name: 'David Bowie' }, 'a surname, and the most pressings wins');
+  assert.deepEqual((await mb.search('low')).artist, { id: 'a-low', name: 'Low' }, '"Toner Low" does not match "low"');
+
+  releases = [credited(pressing('r1', album('soul', 'Soul Mining')), 'The The', 'a-thethe', 'THE THE')];
+  assert.deepEqual((await mb.search('the the soul mining')).artist, { id: 'a-thethe', name: 'The The' }, 'the credited name counts too');
+  assert.equal((await mb.search('0 724352 775324')).artist, null, 'a barcode names no artist');
+});
+
 test('search shows each vinyl album or single once, and leaves out what never came out on vinyl', async (t) => {
   const okc = { id: 'okc', title: 'OK Computer', type: 'Album' };
   const creep = { id: 'creep', title: 'Creep', type: 'Single' };

@@ -22,7 +22,9 @@ const truth = require('./truth.json');
 const esc = (w) => w.replace(/([+\-!(){}[\]^"~*?:\\/]|&&|\|\|)/g, '\\$1');
 const words = (text) => text.toLowerCase().split(/\s+/).filter(Boolean).map(esc);
 const phrase = (text) => `"${text.trim().replace(/["\\]/g, '\\$&')}"`;
-const VINYL = '(format:(vinyl OR 12vinyl) OR primarytype:album)';
+// SMALL=1 counts 45s and 10" records too, like the app's "Include 45s and 10" records".
+const SMALL = process.env.SMALL === '1';
+const VINYL = `(format:(vinyl OR 12vinyl${SMALL ? ' OR 7vinyl OR 10vinyl' : ''}) OR primarytype:album)`;
 
 // One word's forms: as typed, as a prefix when it's the half-typed last word, and with one typo allowed.
 // The app only treats a last word of 3 letters or more as a prefix; shortPrefix drops that limit, which
@@ -407,7 +409,7 @@ async function main() {
       };
     }
   }
-  const file = path.join(__dirname, HOLDOUT ? 'results-holdout.json' : 'results.json');
+  const file = path.join(__dirname, `results${HOLDOUT ? '-holdout' : ''}${SMALL ? '-small' : ''}.json`);
   const previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   fs.writeFileSync(file, `${JSON.stringify({ ...previous, ...report }, null, 1)}\n`);
   for (const [name, byCase] of Object.entries(report)) {

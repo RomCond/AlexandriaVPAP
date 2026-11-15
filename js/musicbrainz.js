@@ -207,6 +207,72 @@
     return [...counts].map(([format, n]) => (n > 1 ? `${n} x ${format}` : format)).join(' + ');
   }
 
+  // ---------- The artist a search names ----------
+
+  // Lowercase, accents off, and anything but letters and digits as a space: "Sigur Rós" is "sigur ros".
+  function plain(text) {
+    return (text || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  function editDistance(a, b) {
+    const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      let diagonal = row[0];
+      row[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const next = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+        diagonal = row[j];
+        row[j] = next;
+      }
+    }
+    return row[b.length];
+  }
+
+  /*
+   * A search for just "radiohead" or "low" lists albums, and MusicBrainz ranks albums titled after the
+   * band above the band's own records. So the search also names an artist, for a row above the albums,
+   * when their name is what was typed or the words at its start or end ("radiohead kid"). One typo is
+   * fine in a name of 5 letters or more, and a leading "The" can be left off. A two-word name also
+   * matches by its last word when that has 4 letters or more ("bowie"); shorter ones are too common
+   * ("Toner Low" would match "low"). The artist comes from the pressings already found, so it costs
+   * no extra request; with several, the one with the most pressings wins. Returns { id, name } or null.
+   */
+  function artistInResults(releases, text) {
+    const words = plain(text).split(' ').filter(Boolean);
+    const runs = [];
+    for (let k = words.length; k >= 1; k--) {
+      runs.push(words.slice(0, k).join(' '));
+      if (k < words.length) runs.push(words.slice(words.length - k).join(' '));
+    }
+    const close = (run, name) => run === name || (name.length >= 5 && editDistance(run, name) <= 1);
+
+    const artists = new Map();
+    for (const release of releases) {
+      const part = (release['artist-credit'] || [])[0];
+      if (!part || !part.artist || !part.artist.id || SKIPPED_STATUSES.includes(release.status)) continue;
+      const artist = artists.get(part.artist.id) || { id: part.artist.id, name: part.artist.name, pressings: 0, names: new Set() };
+      artist.pressings += 1;
+      for (const name of [part.name, part.artist.name].map(plain).filter(Boolean)) {
+        artist.names.add(name);
+        artist.names.add(name.replace(/^the /, ''));
+        const parts = name.split(' ');
+        if (parts.length === 2 && parts[1].length >= 4) artist.names.add(parts[1]);
+      }
+      artists.set(artist.id, artist);
+    }
+
+    let best = null;
+    for (const artist of artists.values()) {
+      const run = runs.find((r) => [...artist.names].some((name) => close(r, name)));
+      if (!run) continue;
+      const length = run.split(' ').length;
+      if (!best || artist.pressings > best.pressings || (artist.pressings === best.pressings && length > best.length)) {
+        best = { id: artist.id, name: artist.name, pressings: artist.pressings, length };
+      }
+    }
+    return best && { id: best.id, name: best.name };
+  }
+
   // ---------- Public calls ----------
 
   /*
@@ -218,6 +284,7 @@
    * vinyl pressings of albums that have them, so those show anyway with vinyl: false
    * ("Vinyl not confirmed"). The year is the earliest vinyl pressing, or the earliest release when
    * there's none. 45s and 10" records count only when small is on.
+   * Resolves to { results, artist }, where artist is the one artistInResults names, or null.
    */
   async function searchReleaseGroups(text, signal, small) {
     // Results matching every word, in the title, the artist or a release note like "blue album", rank
@@ -260,7 +327,7 @@
       const { count, score } = pressings.get(album.group.id);
       return score + PRESSINGS_WEIGHT * Math.log(count);
     };
-    return [...albums.values()]
+    const results = [...albums.values()]
       .sort((a, b) => rank(b) - rank(a)
         || b.score - a.score
         || Number(b.vinyl) - Number(a.vinyl)
@@ -280,6 +347,7 @@
         formatHint: null,
         media: '',
       }));
+    return { results, artist: artistInResults(data.releases || [], text) };
   }
 
   // Only vinyl pressings come back (45s and 10" only when small is on). hiddenNonVinyl counts the
@@ -321,10 +389,10 @@
   }
 
   // What the single search box on the Add page calls. Pass { small: true } to include 45s and 10"
-  // records. Resolves to { results, hiddenNonVinyl, hiddenSmall }.
+  // records. Resolves to { results, artist, hiddenNonVinyl, hiddenSmall }; artist is null for a barcode.
   async function search(text, signal, { small = false } = {}) {
-    if (looksLikeBarcode(text)) return searchBarcode(text.replace(/\D/g, ''), signal, small);
-    return { results: await searchReleaseGroups(text, signal, small), hiddenNonVinyl: 0, hiddenSmall: 0 };
+    if (looksLikeBarcode(text)) return { ...(await searchBarcode(text.replace(/\D/g, ''), signal, small)), artist: null };
+    return { ...(await searchReleaseGroups(text, signal, small)), hiddenNonVinyl: 0, hiddenSmall: 0 };
   }
 
   /*

@@ -37,12 +37,16 @@ vm.runInNewContext(source, sandbox, { filename: 'musicbrainz.js' });
 const mb = sandbox.module.exports;
 
 // Runs the app's release search, with the query built by queryFor(text) when it's given. The raw
-// MusicBrainz reply rides along on the results as .raw, for re-ranking.
+// MusicBrainz reply rides along on the results as .raw, for re-ranking. The app now also names an
+// artist for the row above the albums; that rides along as .artist (undefined on the old app).
+// SMALL=1 searches with 45s and 10" records on.
 async function searchWith(text, queryFor) {
   rewrite = queryFor ? () => queryFor(text) : null;
   try {
-    const results = await mb.searchReleaseGroups(text, undefined, false);
+    const out = await mb.searchReleaseGroups(text, undefined, process.env.SMALL === '1');
+    const results = Array.isArray(out) ? out : out.results;
     Object.defineProperty(results, 'raw', { value: lastRaw });
+    if (!Array.isArray(out)) Object.defineProperty(results, 'artist', { value: out.artist });
     return results;
   } finally {
     rewrite = null;
