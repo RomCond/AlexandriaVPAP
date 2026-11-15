@@ -876,15 +876,12 @@ button.wished {
 .empty h2 { margin-bottom: 6px; font-size: 1.4rem; }
 .empty p { margin: 0 0 18px; }
 
-.empty-disc {
+/* The header logo, drawn again from the same markup through <use href="#logo-record">. */
+.empty-logo {
   display: block;
   width: 120px;
-  aspect-ratio: 1;
+  height: 120px;
   margin: 0 auto 18px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle, var(--bg) 0 3%, var(--accent) 3.5% 30%, transparent 31%),
-    repeating-radial-gradient(circle, var(--vinyl) 0 2px, var(--vinyl-groove) 2px 3px);
 }
 
 /* ---------- Covers ---------- */
