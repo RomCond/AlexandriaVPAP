@@ -430,8 +430,10 @@
     return times;
   }
 
+  const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
   // In key order, so two devices holding the same times write them the same way.
-  const timesObject = (times) => Object.fromEntries([...times].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const timesObject = (times) => Object.fromEntries([...times].sort(([a], [b]) => compareText(a, b)));
 
   // What you deleted, by list: record ids, wish ids and vinyl keys, each with when you deleted it.
   const markersFrom = (value) => ({
@@ -444,6 +446,118 @@
     wishlist: timesObject(marks.wishlist),
     confirmed: timesObject(marks.confirmed),
   });
+
+  // ---------- Syncing between devices ----------
+
+  const timeOf = (at) => Date.parse(at) || 0;
+  // Records saved before they had a change time count from when they were added.
+  const changedAt = (record) => timeOf(record.updatedAt || record.addedAt);
+
+  /*
+   * One list as two devices hold it, merged entry by entry. Each side is { live, deleted }: Maps from a
+   * key to its entry, and from a key to when it was deleted. The newer copy of an entry wins. A
+   * deletion wins over any copy that isn't newer than it. Two copies changed at the same moment are
+   * told apart by their contents, so both devices pick the same one.
+   */
+  function mergeEntries(mine, theirs, changedAtOf) {
+    const newer = (a, b) => (changedAtOf(a) - changedAtOf(b) || compareText(JSON.stringify(a), JSON.stringify(b))) > 0;
+    const later = (a, b) => (timeOf(a) - timeOf(b) || compareText(a, b)) > 0;
+    const live = new Map(mine.live);
+    for (const [key, entry] of theirs.live) if (!live.has(key) || newer(entry, live.get(key))) live.set(key, entry);
+    const deleted = new Map(mine.deleted);
+    for (const [key, at] of theirs.deleted) if (!deleted.has(key) || later(at, deleted.get(key))) deleted.set(key, at);
+    for (const [key, entry] of live) {
+      if (!deleted.has(key)) continue;
+      if (timeOf(deleted.get(key)) >= changedAtOf(entry)) live.delete(key);
+      else deleted.delete(key);
+    }
+    return { live, deleted };
+  }
+
+  // Albums kept so far, by release group and by artist and title. Answers the same question as
+  // sameAlbum with a lookup instead of a pass over every record, which takes seconds for thousands.
+  function albumIndex() {
+    const groups = new Set();
+    const names = new Set();
+    const namesWithoutGroup = new Set();
+    const keys = (record) => {
+      const deluxe = DELUXE_WORDS.test(record.title);
+      return {
+        group: record.releaseGroupId ? JSON.stringify([deluxe, record.releaseGroupId]) : null,
+        name: JSON.stringify([deluxe, normArtist(record.artist), normTitle(record.title)]),
+      };
+    };
+    return {
+      has(record) {
+        const { group, name } = keys(record);
+        return group ? groups.has(group) || namesWithoutGroup.has(name) : names.has(name);
+      },
+      add(record) {
+        const { group, name } = keys(record);
+        names.add(name);
+        if (group) groups.add(group);
+        else namesWithoutGroup.add(name);
+      },
+    };
+  }
+
+  const byAdded = (a, b) => timeOf(a.addedAt) - timeOf(b.addedAt) || compareText(a.id, b.id);
+
+  // The first copy of each album, in the order they were added. `kept` collects the albums kept.
+  function firstCopies(items, kept) {
+    return [...items].sort(byAdded).filter((item) => {
+      if (kept.has(item)) return false;
+      kept.add(item);
+      return true;
+    });
+  }
+
+  const side = (state, list) => ({ live: new Map(state[list].map((record) => [record.id, record])), deleted: timesFrom(state.deleted[list]) });
+
+  /*
+   * The state two devices should both hold after a sync, from what each holds now. The result
+   * depends only on the two states, so merging in either order, or merging again, gives the same one.
+   * - The newer copy of a record, a wish or a vinyl confirmation wins, as a whole.
+   * - A deletion wins over any copy that isn't newer than it, so the other device can't bring it back.
+   * - You keep one copy per album. If both devices added the same album, the copy added first stays.
+   * - A wish for an album you own leaves the wishlist.
+   */
+  function mergeSyncStates(mine, theirs) {
+    const records = mergeEntries(side(mine, 'records'), side(theirs, 'records'), changedAt);
+    const wishes = mergeEntries(side(mine, 'wishlist'), side(theirs, 'wishlist'), changedAt);
+    const confirmed = mergeEntries(
+      { live: timesFrom(mine.confirmed), deleted: timesFrom(mine.deleted.confirmed) },
+      { live: timesFrom(theirs.confirmed), deleted: timesFrom(theirs.deleted.confirmed) },
+      timeOf,
+    );
+    const owned = albumIndex();
+    return {
+      records: firstCopies(records.live.values(), owned),
+      wishlist: firstCopies([...wishes.live.values()].filter((wish) => !owned.has(wish)), albumIndex()),
+      confirmed: timesObject(confirmed.live),
+      deleted: markersObject({ records: records.deleted, wishlist: wishes.deleted, confirmed: confirmed.deleted }),
+    };
+  }
+
+  // Another device's sync state, which arrives over the network. Records that can't be read are left
+  // out, and so are confirmations and deletions without a time.
+  function readSyncState(value) {
+    const data = value && typeof value === 'object' ? value : {};
+    const list = (items) => (Array.isArray(items) ? items : []).flatMap((item) => {
+      if (!item || typeof item.id !== 'string') return [];
+      try {
+        return [readRecord(item)];
+      } catch (e) {
+        return [];
+      }
+    });
+    return {
+      records: list(data.records),
+      wishlist: list(data.wishlist),
+      confirmed: timesObject(timesFrom(data.confirmed)),
+      deleted: markersObject(markersFrom(data.deleted)),
+    };
+  }
 
   /*
    * Pass window.localStorage in the browser. Pass nothing (or null) when storage is
@@ -757,6 +871,19 @@
       // deleted from each, with times. Preferences and the discography cache stay on this device.
       syncState,
 
+      // Merges another device's sync state into this one and saves the result. Listeners hear about it
+      // only when something changed.
+      applySyncState(theirs) {
+        const mine = syncState();
+        const merged = mergeSyncStates(mine, readSyncState(theirs));
+        if (JSON.stringify(merged) === JSON.stringify(mine)) return;
+        records = merged.records;
+        wishes = merged.wishlist;
+        confirmed = timesFrom(merged.confirmed);
+        deleted = markersFrom(merged.deleted);
+        commit();
+      },
+
       getDiscography(artistId) {
         const entry = read(KEYS.discographies, {})[artistId];
         if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_MAX_AGE) return null;
@@ -821,6 +948,7 @@
     parseRecordList,
     similarity,
     bestAlbumMatch,
+    mergeSyncStates,
     memoryStorage,
     createStore,
   };
