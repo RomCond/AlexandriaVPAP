@@ -1,6 +1,6 @@
 # Discography load speed
 
-Iteration 1: measurements and options. No app code changed.
+Iteration 1 measured the options below. Iterations 2 and 3 built the recommendation. Their results are near the end.
 
 ## Summary
 
@@ -162,6 +162,33 @@ Why not the others:
 3. **Iteration 4, if you agree to background loading: I2.** Add a low priority lane to the request queue and warm the collection artists in idle time.
 4. **Along the way:** measure 3 or 4 small and mid-sized artists to confirm F never needs more requests than today for them. Also fix today's loader if F is delayed. Making each search query fit one page fixes the missing pressings on its own, at B's cost.
 
+## Iteration 2: option F built
+
+The answers came back: no server, background refresh only for artists you've opened, pressings with no status don't count, groups with no official release load when Vinyl only is turned off, and cached copies show at once up to four weeks old.
+
+The app now runs option F. One search lists the studio albums, then the official and promotional releases are browsed 100 at a time, and the list fills in as each page arrives. Until the vinyl check ends, no line says "Vinyl not confirmed". Turning Vinyl only off loads the release group browse once and keeps it with the discography. Picking another artist stops the requests for the last one. The cache key moved to v6.
+
+Each loader ran live once per artist (measured, 503s left out):
+
+| Artist | Requests before | Requests now | First list now | Groups with an LP, before and now |
+|---|---|---|---|---|
+| Portishead | 3 | 3 | after 1 | 10, 10 |
+| Boards of Canada | 3 | 3 | after 1 | 11, 11 |
+| Khruangbin | 3 | 3 | after 1 | 15, 15 |
+| Radiohead | 8 | 7 | after 1 | 33, 33 |
+| David Bowie | 15 | 18 | after 1 | see below |
+| The Beatles | 36 | 25 | after 1 | see below |
+
+The small and mid-sized artists need no more requests than before. Bowie needs 3 more, as option F predicted.
+
+Pressings found, against the complete lists from iteration 1 (measured):
+
+- Bowie: 487 of 491 (before: 377). The 4 missed have no status.
+- The Beatles: 1,437 of 1,453 (before: 1,264). 12 missed have no status. 4 are interview and broadcast records, which the app ignores anyway.
+- Lines: the same as the exact search in the default view for both, except one extra Bowie line (Tin Machine). With every type on, Bowie shows 2 extra lines and the Beatles miss 5 whose only vinyl pressing has no status. These match the iteration 1 prediction exactly.
+
+A new unit test fakes a search that returns tied results in a new order on each page. The old loader found 215 of 300 pressings with it. The new one finds all 300.
+
 ## Reproducing
 
 ```sh
@@ -171,4 +198,4 @@ NODE_USE_ENV_PROXY=1 node scripts/discography-speed/complete-search.mjs 5441c29d
 NODE_USE_ENV_PROXY=1 node scripts/discography-speed/browse-all.mjs 5441c29d-3602-4898-b1a1-b77fa23b8e50 bowie 'official|promotion'
 ```
 
-`NODE_USE_ENV_PROXY=1` is only needed behind a proxy. The live scripts keep each answer in `data/cache/`, which isn't committed, so a run that stops partway can start again without asking twice. The recorded data is in `scripts/discography-speed/data/`, measured on 2026-11-15.
+`measure-current.mjs` runs the app's current loader. To run the one from before iteration 2, set `MB_MODULE` to the absolute path of `scripts/discography-speed/old-musicbrainz.js`. `NODE_USE_ENV_PROXY=1` is only needed behind a proxy. The live scripts keep each answer in `data/cache/`, which isn't committed, so a run that stops partway can start again without asking twice. The recorded data is in `scripts/discography-speed/data/`, measured on 2026-11-15.
