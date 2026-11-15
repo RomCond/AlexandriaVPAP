@@ -218,7 +218,7 @@
   <dialog id="import-dialog" aria-labelledby="import-heading">
     <form method="dialog" id="import-form" class="edit-form">
       <h2 id="import-heading" tabindex="-1" autofocus>Import records</h2>
-      <p class="muted small import-help">Choose a backup, a text list, or a spreadsheet saved as CSV with column names like <q>Artist</q> and <q>Album</q>. Or paste one record per line: <q>Steely Dan - Aja</q>. Add <q>(Signed)</q> for a note or <q>(45)</q> for a 45.</p>
+      <p class="muted small import-help">Choose a backup, a text list, or an Excel or CSV spreadsheet with column names like <q>Artist</q> and <q>Album</q>. Or paste one record per line: <q>Steely Dan - Aja</q>. Add <q>(Signed)</q> for a note or <q>(45)</q> for a 45.</p>
       <label class="field" id="import-paste"><span>Paste a list</span><textarea name="text" rows="9" spellcheck="false" autocomplete="off" placeholder="Steely Dan - Aja&#10;Rush - Moving Pictures (Signed)&#10;Weezer - Pinkerton (Deluxe)"></textarea></label>
       <div class="import-chosen" id="import-chosen" hidden>
         <span class="import-file-name" id="import-file-name"></span>
@@ -239,6 +239,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="js/xlsx.js"></script>
   <script src="js/store.js"></script>
   <script src="js/musicbrainz.js"></script>
   <script src="js/app.js"></script>

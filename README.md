@@ -3,7 +3,7 @@
 Record Catalog is a small web app that tracks the vinyl records you own and the ones you're looking for.
 
 - **Add records fast.** One search box takes part of an album or artist name, like "ok comp" or "radiohead kid". It also takes the barcode from the sleeve. Matches show as you type. Search lists only vinyl. Each album or single that came out on vinyl gets one line, however many pressings it has. Studio albums show even when MusicBrainz lists no vinyl pressing for them, marked "Vinyl not confirmed". A barcode for a CD or cassette gets a message saying so instead of a result. Search includes LPs and 12" records, and leaves out 45s (7") and 10" records unless you tick **Include 45s and 10" records** on the Add page. The **45s and 10"** chip in the discography is the same setting. One tap adds a record, and the app fills in its year and cover art. You can add anything that isn't in the database by hand. You keep one copy per album, so an album you already have shows "In collection" instead of an Add button. A deluxe edition counts as its own album.
-- **Import what you have.** If your records are already in a note or a spreadsheet, tap **Import** on the Collection page. Paste a list with one record per line, like `Steely Dan - Aja`, or choose a file: a text list, a spreadsheet saved as CSV, or a backup from this app. The app adds the records all at once, then looks each one up on MusicBrainz in the background for its cover, year and spelling. See [Importing records](#importing-records).
+- **Import what you have.** If your records are already in a note or a spreadsheet, tap **Import** on the Collection page. Paste a list with one record per line, like `Steely Dan - Aja`, or choose a file: a text list, an Excel or CSV spreadsheet, or a backup from this app. The app adds the records all at once, then looks each one up on MusicBrainz in the background for its cover, year and spelling. See [Importing records](#importing-records).
 - **Browse your collection.** The buttons next to the search box switch between covers, three across on a phone, and a slim list. The app remembers your choice. The collection groups records under the first letter of the artist's name, ignoring a leading "The". On a list of more than 20 records sorted by artist or title, a strip of letters shows on the right side. Tap a letter, or slide a finger along the strip, to jump to it. **Filter** opens the format filter and the sort order: artist, recently added, year (grouped by decade) or title. Tap a record to edit or delete it, or to open the artist's discography.
 - **Pick one at random.** You can limit the pick to a format or an artist. The app avoids repeating any of your last five picks. The background behind the pick is a gradient from the main color of its cover, and the top of a record's edit screen uses the same gradient.
 - **See what you're missing.** Pick an artist, and the app compares their discography with your collection. It lists what you have and what you're missing, and **Copy list** puts the missing titles on your clipboard to take to the record store. Tap **Got it** when you find one, or **Wishlist** to save it for later.
@@ -34,10 +34,10 @@ MusicBrainz allows about one request per second. The search box waits for a shor
 **Import** opens one screen for everything. Paste text into the box, or tap **Choose a file**. A chosen file shows by name in place of the box, and **Paste instead** brings the box back. The app works out what the text or file is, and before you add anything it says what it found:
 
 - A backup from **Export backup** shows how many records and wishlist records it holds. **Import backup** merges it, as described in [Where the data lives](#where-the-data-lives).
-- A spreadsheet saved as CSV or TSV needs column names in its first row, with one for the artist and one for the title. The app knows names such as Artist, Band or Album Artist for the artist, and Title, Album or Release for the title. It also reads a year, format or notes column, with names such as Year, Released, Format, Media, Notes or Comments. A label, catalog number or condition column goes into the notes, like "Label: Mercury". Commas, tabs and semicolons all work between columns. The import screen names the columns it read and the ones it left out.
+- A spreadsheet, as an Excel .xlsx file or saved as CSV or TSV, needs column names in its first row, with one for the artist and one for the title. The app knows names such as Artist, Band or Album Artist for the artist, and Title, Album or Release for the title. It also reads a year, format or notes column, with names such as Year, Released, Format, Media, Notes or Comments. A label, catalog number or condition column goes into the notes, like "Label: Mercury". Commas, tabs and semicolons all work between columns. The import screen names the columns it read and the ones it left out.
 - Anything else is a typed list, one record per line.
 
-Excel on Windows saves CSV in its own text encoding, and the app reads that too, so names like "Motörhead" keep their accents. The app can't read Excel (.xlsx, .xls) or Numbers files yet. Save the sheet as CSV first.
+Excel on Windows saves CSV in its own text encoding, and the app reads that too, so names like "Motörhead" keep their accents. From an Excel file, the app reads the first sheet, and a date in the year column gives its year. It reads .xlsx files without an add-on, in browsers from 2023 on: Safari 16.4, Chrome 103 and Firefox 113. An older browser says to save the sheet as CSV. The app can't read Numbers or old Excel .xls files, so save those as .xlsx or CSV first.
 
 In a typed list, each line is an artist, a dash with a space on each side, then the title. A tab between artist and title also works, so you can paste two columns from a spreadsheet without their names. The import ignores numbering and bullets at the start of a line.
 
@@ -76,6 +76,7 @@ The discography shows studio albums by default. The toggles at the top switch on
 index.html            page markup for all four views
 css/styles.css        styles, light and dark
 js/store.js           records, backups, caching, and the matching logic
+js/xlsx.js            reads the first sheet of an Excel file
 js/musicbrainz.js     MusicBrainz and Cover Art Archive client
 js/app.js             the UI
 tests/                unit tests and browser tests
@@ -89,3 +90,5 @@ npm run test:e2e    # browser tests with Playwright
 ```
 
 The browser tests need Playwright (`npm install`, then `npx playwright install chromium`). They answer MusicBrainz calls with fixed sample data, so they run offline and give the same result every time. Set `SCREENSHOT_DIR=some/folder` to save screenshots of each view.
+
+The Excel files in `tests/fixtures` come from xlsxwriter, openpyxl and LibreOffice. To make them again, run `python3 tests/fixtures/make-xlsx-fixtures.py`.

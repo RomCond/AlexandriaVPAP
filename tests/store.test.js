@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const S = require('../js/store.js');
 
 // What choosing a backup file in the import dialog does.
@@ -180,14 +182,54 @@ test('backups round trip and do not create duplicates', () => {
   assert.throws(() => restore(target, '{"hello": 1}'), /look like/);
 });
 
-test('fileText reads UTF-8 and the encodings Excel saves text in, and turns away spreadsheet files', () => {
-  assert.equal(S.fileText(new TextEncoder().encode('﻿Artist,Title\nMotörhead,Ace of Spades')), 'Artist,Title\nMotörhead,Ace of Spades');
+test('fileContent reads UTF-8 and the encodings Excel saves text in', async () => {
+  assert.equal(await S.fileContent(new TextEncoder().encode('﻿Artist,Title\nMotörhead,Ace of Spades')), 'Artist,Title\nMotörhead,Ace of Spades');
   const windows1252 = Uint8Array.from([...'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite'], (ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0)));
-  assert.equal(S.fileText(windows1252), 'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite', 'CSV saved by Excel on Windows');
+  assert.equal(await S.fileContent(windows1252), 'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite', 'CSV saved by Excel on Windows');
   const utf16 = Uint8Array.from([0xff, 0xfe, ...Buffer.from('Artist\tTitle\nBjörk\tPost', 'utf16le')]);
-  assert.equal(S.fileText(utf16), 'Artist\tTitle\nBjörk\tPost', 'Unicode Text saved by Excel');
-  assert.throws(() => S.fileText(Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])), /Excel or Numbers.*CSV/, '.xlsx and .numbers');
-  assert.throws(() => S.fileText(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1])), /Excel or Numbers.*CSV/, 'old .xls');
+  assert.equal(await S.fileContent(utf16), 'Artist\tTitle\nBjörk\tPost', 'Unicode Text saved by Excel');
+});
+
+const fixture = (name) => new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', name)));
+
+test('fileContent reads the first sheet of an .xlsx file, and readImport reads it like a CSV', async () => {
+  const read = S.readImport(await S.fileContent(fixture('records-xlsxwriter.xlsx')));
+  assert.equal(read.kind, 'table');
+  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Label', 'Notes']);
+  assert.deepEqual(read.notVinyl, ['Björk, Post, 1995, CD']);
+  assert.deepEqual(read.items, [
+    { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: 'Label: ABC' },
+    { artist: 'Motörhead', title: 'Ace of Spades', year: 1980, format: '45', notes: 'Signed; Label: Bronze' },
+    { artist: 'Crosby, Stills & Nash', title: 'Crosby, Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold\nfirst press; Label: Atlantic' },
+    { artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: '' },
+    { artist: 'Weezer', title: 'Pinkerton', year: 1996, format: 'LP', notes: '' },
+  ], 'a date in the Year column gives its year, and the second sheet is not read');
+});
+
+test('fileContent gives every cell of an .xlsx row as text, and reads a number as a date only when its format is a date', async () => {
+  const rows = await S.fileContent(fixture('records-xlsxwriter-gaps.xlsx'));
+  assert.deepEqual(rows, [['Artist', 'Album', 'Year', 'Format'], ['Portishead', 'Portishead', '', 'LP'], ['Steely Dan', 'Gaucho', '1980', 'LP']],
+    'an empty cell in the middle is an empty string, and 0 "AD" is a number format, not a date');
+});
+
+test('fileContent reads .xlsx files from LibreOffice and from workbooks dated from 1904', async () => {
+  const libreoffice = S.readImport(await S.fileContent(fixture('records-libreoffice.xlsx')));
+  assert.deepEqual(libreoffice.items.map((item) => [item.title, item.year]), [['Dummy', 1994], ['Kid A', 2000]]);
+  const mac = S.readImport(await S.fileContent(fixture('records-openpyxl-1904.xlsx')));
+  assert.deepEqual(mac.items, [{ artist: 'Pink Floyd', title: 'The Dark Side of the Moon', year: 1973, format: null, notes: '' }]);
+});
+
+test('fileContent says to save as CSV for Numbers, old Excel, damaged files and browsers that cannot unzip', async () => {
+  await assert.rejects(S.fileContent(fixture('records.numbers')), /can't read Numbers or old Excel \(\.xls\) files/);
+  await assert.rejects(S.fileContent(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1])), /can't read Numbers or old Excel \(\.xls\) files/);
+  await assert.rejects(S.fileContent(fixture('records-xlsxwriter.xlsx').slice(0, 2000)), /couldn't be read\. Save the sheet as CSV/);
+  const unzip = globalThis.DecompressionStream;
+  delete globalThis.DecompressionStream;
+  try {
+    await assert.rejects(S.fileContent(fixture('records-xlsxwriter.xlsx')), /This browser can't open Excel files\. Save the sheet as CSV/);
+  } finally {
+    globalThis.DecompressionStream = unzip;
+  }
 });
 
 test('readImport knows a backup from a list that starts with a bracket', () => {

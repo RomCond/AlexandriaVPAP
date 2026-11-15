@@ -650,7 +650,7 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
   }
 });
 
-test('imports a spreadsheet saved as CSV, and says what to do with an Excel file', { skip: !chromium && 'playwright is not installed' }, async () => {
+test('imports spreadsheets saved as Excel or CSV, and says what to do with a Numbers file', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
     const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
@@ -666,16 +666,21 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
     assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
     await page.click('#import-btn');
     await page.fill('#import-form [name=text]', 'Steely Dan - Aja');
-    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]);
-    await page.setInputFiles('#import-file', { name: 'records.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: zip });
-    await page.locator('#import-summary', { hasText: "can't read Excel or Numbers files yet" }).waitFor();
-    assert.equal(await text(page, '#import-file-name'), 'records.xlsx', 'the file shows by name in place of the paste box');
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records.numbers'));
+    await page.locator('#import-summary', { hasText: "can't read Numbers or old Excel (.xls) files" }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.numbers', 'the file shows by name in place of the paste box');
     assert.ok(await page.locator('#import-form [name=text]').isHidden());
     assert.ok(await page.locator('#import-submit').isDisabled());
     await page.click('#import-paste-btn');
     assert.ok(await page.locator('#import-chosen').isHidden());
     assert.equal(await page.inputValue('#import-form [name=text]'), 'Steely Dan - Aja', 'Paste instead brings back what was pasted');
     await page.locator('#import-summary', { hasText: '1 record to add.' }).waitFor();
+
+    // An .xlsx file, unzipped by the browser itself
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records-xlsxwriter.xlsx'));
+    await page.locator('#import-summary', { hasText: '5 records to add.' }).waitFor();
+    assert.match(await text(page, '#import-summary'), /Read the Artist, Album, Year, Format, Label and Notes columns\.[\s\S]*1 row is a CD or cassette/);
+    await shot(page, 'import-05-excel');
 
     // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
     const csv = [

@@ -987,8 +987,8 @@
   // with the albums already in the collection taken out. Null when there's nothing to add.
   let importing = null;
 
-  // The file being imported, shown by name in place of the paste box: { name, text }, or { name, problem }
-  // when it can't be read. Null while you paste.
+  // The file being imported, shown by name in place of the paste box: { name, content } with what
+  // RC.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
   let chosenFile = null;
 
   function chooseImportSource(file) {
@@ -1028,7 +1028,7 @@
     }
     let read;
     try {
-      read = S.readImport(chosenFile ? chosenFile.text : $('#import-form').elements.text.value);
+      read = S.readImport(chosenFile ? chosenFile.content : $('#import-form').elements.text.value);
     } catch (e) {
       showImport(null, [importProblem(h('p', {}, e.message))]);
       return;
@@ -1078,7 +1078,7 @@
       const bytes = await file.arrayBuffer().catch(() => {
         throw new Error("Couldn't read that file.");
       });
-      source = { name: file.name, text: S.fileText(new Uint8Array(bytes)) };
+      source = { name: file.name, content: await S.fileContent(new Uint8Array(bytes)) };
     } catch (e) {
       source = { name: file.name, problem: e.message };
     }

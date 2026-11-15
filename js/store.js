@@ -1,12 +1,13 @@
 /*
  * Record storage and matching helpers.
- * Loaded as a plain script in the browser (window.RC.store) and with require() in Node tests.
+ * Loaded as a plain script in the browser (window.RC.store), after js/xlsx.js, and with require() in Node tests.
  */
 (function (root, factory) {
-  const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
+  const node = typeof module === 'object' && module.exports;
+  const api = factory(node ? require('./xlsx.js') : root.RC.xlsx);
+  if (node) module.exports = api;
   else (root.RC = root.RC || {}).store = api;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (xlsx) {
   'use strict';
 
   const KEYS = {
@@ -404,58 +405,66 @@
   const rowText = (cells) => cells.map((value) => value.trim()).filter(Boolean).join(', ');
 
   /*
-   * Reads CSV or TSV text whose first row names the columns, as a spreadsheet saves it, or returns null
-   * when that row names no artist and title column. Returns { columns: [name], ignored: [name], items,
+   * Reads a spreadsheet's rows of cells whose first row names the columns, or returns null when that
+   * row names no artist and title column. Returns { columns: [name], ignored: [name], items,
    * unreadable: [row], notVinyl: [row], merged }, where columns are the ones read and ignored are the rest.
    */
+  function readTable(rows) {
+    const [head, ...body] = rows.filter((cells) => cells.some((cell) => cell.trim()));
+    const at = head && readHeader(head);
+    if (!at) return null;
+    const cell = (cells, field) => (field in at ? (cells[at[field]] || '').trim() : '');
+    const entries = [];
+    const unreadable = [];
+    const notVinyl = [];
+    for (const cells of body) {
+      if (isNotVinyl(cell(cells, 'format'))) {
+        notVinyl.push(rowText(cells));
+        continue;
+      }
+      const entry = readEntry({
+        artist: cell(cells, 'artist'),
+        title: cell(cells, 'title'),
+        year: (YEAR_IN_DATE.exec(cell(cells, 'year')) || [null])[0],
+        format: formatFromColumn(cell(cells, 'format')),
+        notes: [cell(cells, 'notes'), ...Object.entries(NOTE_COLUMNS).map(([field, name]) => cell(cells, field) && `${name}: ${cell(cells, field)}`)],
+      });
+      if (entry) entries.push(entry);
+      else unreadable.push(rowText(cells));
+    }
+    const used = Object.values(at);
+    return {
+      columns: head.filter((name, index) => used.includes(index)).map((name) => name.trim()),
+      ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
+      ...foldRepeats(entries),
+      unreadable,
+      notVinyl,
+    };
+  }
+
+  // CSV or TSV text read as a table, with whichever delimiter makes the first row name the columns.
   function parseRecordTable(text) {
     const lines = text.replace(/\r\n?/g, '\n');
     for (const delimiter of DELIMITERS) {
-      const [head, ...rows] = splitRows(lines, delimiter).filter((cells) => cells.some((cell) => cell.trim()));
-      const at = head && readHeader(head);
-      if (!at) continue;
-      const cell = (cells, field) => (field in at ? (cells[at[field]] || '').trim() : '');
-      const entries = [];
-      const unreadable = [];
-      const notVinyl = [];
-      for (const cells of rows) {
-        if (isNotVinyl(cell(cells, 'format'))) {
-          notVinyl.push(rowText(cells));
-          continue;
-        }
-        const entry = readEntry({
-          artist: cell(cells, 'artist'),
-          title: cell(cells, 'title'),
-          year: (YEAR_IN_DATE.exec(cell(cells, 'year')) || [null])[0],
-          format: formatFromColumn(cell(cells, 'format')),
-          notes: [cell(cells, 'notes'), ...Object.entries(NOTE_COLUMNS).map(([field, name]) => cell(cells, field) && `${name}: ${cell(cells, field)}`)],
-        });
-        if (entry) entries.push(entry);
-        else unreadable.push(rowText(cells));
-      }
-      const used = Object.values(at);
-      return {
-        columns: head.filter((name, index) => used.includes(index)).map((name) => name.trim()),
-        ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
-        ...foldRepeats(entries),
-        unreadable,
-        notVinyl,
-      };
+      const table = readTable(splitRows(lines, delimiter));
+      if (table) return table;
     }
     return null;
   }
 
   // .xlsx and .numbers files are zip archives, and .xls files start with D0 CF 11 E0.
-  const SPREADSHEET_SIGNATURES = [[0x50, 0x4b, 0x03, 0x04], [0xd0, 0xcf, 0x11, 0xe0]];
+  const ZIP = [0x50, 0x4b, 0x03, 0x04];
+  const OLD_EXCEL = [0xd0, 0xcf, 0x11, 0xe0];
+  const startsWith = (bytes, signature) => signature.every((byte, i) => bytes[i] === byte);
 
   /*
-   * The text in a chosen file, from its bytes. Excel saves "Unicode Text" as UTF-16 and, on Windows,
-   * CSV as Windows-1252, so a file that isn't valid UTF-8 is read as Windows-1252.
+   * What a chosen file holds, from its bytes: an .xlsx file's first sheet as rows of cells, or else its
+   * text. Both go to readImport. Excel saves "Unicode Text" as UTF-16 and, on Windows, CSV as
+   * Windows-1252, so a file that isn't valid UTF-8 is read as Windows-1252.
    */
-  function fileText(bytes) {
-    if (SPREADSHEET_SIGNATURES.some((signature) => signature.every((byte, i) => bytes[i] === byte))) {
-      throw new Error("The app can't read Excel or Numbers files yet. Save the sheet as CSV, then choose the CSV file.");
-    }
+  async function fileContent(bytes) {
+    if (startsWith(bytes, ZIP)) return xlsx.sheetRows(bytes);
+    if (startsWith(bytes, OLD_EXCEL)) throw new Error(xlsx.NOT_EXCEL);
     if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
     try {
       return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -481,15 +490,20 @@
   }
 
   /*
-   * Reads pasted text or a chosen file, whichever kind it is:
+   * Reads pasted text or what fileContent read from a file, whichever kind it is:
    *   { kind: 'backup', records, wishlist, vinylConfirmed }                     a Record Catalog backup, for importBackup
-   *   { kind: 'table', columns, ignored, items, unreadable, notVinyl, merged }  CSV or TSV whose first row names the columns
+   *   { kind: 'table', columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
    *   { kind: 'list', items, unreadable, merged }                               one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
+   * A sheet's rows without column names read like its columns pasted in, as a list.
    * Throws when text that starts like a backup isn't one.
    */
-  function readImport(text) {
-    const source = String(text || '');
+  function readImport(content) {
+    if (Array.isArray(content)) {
+      const table = readTable(content);
+      return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(content.map((cells) => cells.join('\t')).join('\n')) };
+    }
+    const source = String(content || '');
     if (BACKUP_START.test(source)) return { kind: 'backup', ...parseBackup(source) };
     const table = parseRecordTable(source);
     return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(source) };
@@ -939,7 +953,7 @@
     categoryOf,
     compareDiscography,
     pickRandom,
-    fileText,
+    fileContent,
     readImport,
     similarity,
     bestAlbumMatch,
