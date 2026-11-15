@@ -3,7 +3,7 @@
 Record Catalog is a small web app that tracks the vinyl records you own and the ones you're looking for.
 
 - **Add records fast.** One search box takes part of an album or artist name, like "ok comp" or "radiohead kid". It also takes the barcode from the sleeve. Matches show as you type. Search lists only vinyl. Each album or single that came out on vinyl gets one line, however many pressings it has. Studio albums show even when MusicBrainz lists no vinyl pressing for them, marked "Vinyl not confirmed". A barcode for a CD or cassette gets a message saying so instead of a result. Search includes LPs and 12" records, and leaves out 45s (7") and 10" records unless you tick **Include 45s and 10" records** on the Add page. The **45s and 10"** chip in the discography is the same setting. One tap adds a record, and the app fills in its year and cover art. You can add anything that isn't in the database by hand. You keep one copy per album, so an album you already have shows "In collection" instead of an Add button. A deluxe edition counts as its own album.
-- **Import a list.** If your records are already in a note or spreadsheet, tap **Import a list** on the Collection page and paste the list or choose a text file, with one record per line: `Steely Dan - Aja`. The app adds them all at once, then looks each one up on MusicBrainz in the background for its cover, year and spelling. See [Importing a list](#importing-a-list).
+- **Import what you have.** If your records are already in a note or a spreadsheet, tap **Import** on the Collection page. Paste a list with one record per line, like `Steely Dan - Aja`, or choose a file: a text list, a spreadsheet saved as CSV, or a backup from this app. The app adds the records all at once, then looks each one up on MusicBrainz in the background for its cover, year and spelling. See [Importing records](#importing-records).
 - **Browse your collection.** The buttons next to the search box switch between covers, three across on a phone, and a slim list. The app remembers your choice. The collection groups records under the first letter of the artist's name, ignoring a leading "The". On a list of more than 20 records sorted by artist or title, a strip of letters shows on the right side. Tap a letter, or slide a finger along the strip, to jump to it. **Filter** opens the format filter and the sort order: artist, recently added, year (grouped by decade) or title. Tap a record to edit or delete it, or to open the artist's discography.
 - **Pick one at random.** You can limit the pick to a format or an artist. The app avoids repeating any of your last five picks. The background behind the pick is a gradient from the main color of its cover, and the top of a record's edit screen uses the same gradient.
 - **See what you're missing.** Pick an artist, and the app compares their discography with your collection. It lists what you have and what you're missing, and **Copy list** puts the missing titles on your clipboard to take to the record store. Tap **Got it** when you find one, or **Wishlist** to save it for later.
@@ -25,17 +25,25 @@ Any static host, such as GitHub Pages or Netlify, works too.
 
 ## Where the data lives
 
-The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist, and **Import backup** loads it somewhere else. Importing a backup merges it with what's there and skips albums you already have.
+The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist. To load it somewhere else, tap **Import** and choose the file. Importing a backup merges it with what's there and skips albums you already have.
 
 MusicBrainz allows about one request per second. The search box waits for a short pause in typing and cancels searches you've typed past. The app keeps each discography for a week, and **Refresh** on an artist fetches it again. When MusicBrainz is busy or the connection drops, the app tries the request again after 2, 4, 8 and 16 seconds, then shows an error. On a device that's offline, the app shows the error after the first wait of 2 seconds.
 
-## Importing a list
+## Importing records
 
-Each line is an artist, a dash with a space on each side, then the title. A tab between artist and title also works, so you can paste two columns from a spreadsheet. The import ignores numbering and bullets at the start of a line.
+**Import** opens one screen for everything. Paste text into the box, or tap **Choose a file**, which puts the file's text in the box. The app works out what the text is, and before you add anything it says what it found:
 
-Text in brackets at the end of a title becomes a note, like `(Signed)` or `(Test Press)`. The words "Deluxe" and "Expanded" stay in the title instead, so the deluxe edition counts as its own album. `(45)` or `(Single)` makes the record a 45. The app leaves that text out of the notes, since the format already says it. Every other record gets the format chosen under **Add as**. Before you add anything, the import screen says how many records it will add and lists any lines it can't read.
+- A backup from **Export backup** shows how many records and wishlist records it holds. **Import backup** merges it, as described in [Where the data lives](#where-the-data-lives).
+- A spreadsheet saved as CSV or TSV needs column names in its first row, with one for the artist and one for the title. The app knows names such as Artist, Band or Album Artist for the artist, and Title, Album or Release for the title. It also reads a year, format or notes column, with names such as Year, Released, Format, Media, Notes or Comments. Commas, tabs and semicolons all work between columns. The import screen names the columns it read and the ones it left out.
+- Anything else is a typed list, one record per line.
 
-You keep one copy per album, so the import skips albums already in your collection. Lines that name the same album become one record with a note like "2 copies".
+Excel on Windows saves CSV in its own text encoding, and the app reads that too, so names like "Motörhead" keep their accents. The app can't read Excel (.xlsx, .xls) or Numbers files yet. Save the sheet as CSV first.
+
+In a typed list, each line is an artist, a dash with a space on each side, then the title. A tab between artist and title also works, so you can paste two columns from a spreadsheet without their names. The import ignores numbering and bullets at the start of a line.
+
+Text in brackets at the end of a title becomes a note, like `(Signed)` or `(Test Press)`. This works in a spreadsheet's title column too. The words "Deluxe" and "Expanded" stay in the title instead, so the deluxe edition counts as its own album. `(45)` or `(Single)` makes the record a 45. The app leaves that text out of the notes, since the format already says it. A spreadsheet's format column, like `2xLP`, `7"` or `Vinyl`, sets the format. Every other record gets the format chosen under **Add as**. The import screen also lists any lines or rows it can't read.
+
+You keep one copy per album, so the import skips albums already in your collection. Lines or rows that name the same album become one record with a note like "2 copies".
 
 After adding, the app looks up each record on MusicBrainz, about one a second, and shows its progress above the collection. You can keep using the app while it works. If you close the app or it loses its connection, the lookups continue the next time it's open, or when you tap **Try again**. The app only takes a match when it's clear:
 
