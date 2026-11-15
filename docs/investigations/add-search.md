@@ -28,10 +28,27 @@ What's on the branch now:
 
 - `search()` in `js/musicbrainz.js` returns `artist` next to the albums, using the rules scored as smart+found-artist. The artist comes from the pressings the search already found, so there's no extra request. A barcode search returns no artist.
 - The Add page shows the row above the albums. A tap switches to the Discography tab and calls `loadDiscography` with the artist's MusicBrainz id, the same call the tab's own artist search makes. The discography code is unchanged.
-- `check-app.js` runs the app's search on all 36 queries from the saved replies. The albums match smart and the row matches smart+found-artist on all 36, so the app scores **26 of 26** on the main set and **10 of 10** on the fresh set.
+- `check-app.js` runs the app's search on all 36 queries from the saved replies. The albums match smart and the row's artist matches smart+found-artist on all 36, so the app scores **26 of 26** on the main set and **10 of 10** on the fresh set.
 - New unit tests cover the whole name, the words at the start, a typo, a surname, "Toner Low" not matching "low", a credited name, and no artist for a barcode. A new browser test covers the row, the tap, phone width and a barcode search. `npm test` passes 54 and `npm run test:e2e` passes 5.
 
-**Not done: rescoring with 45s and 10" records on.** With that setting on, the app sends a different query, and none of those replies are saved, so it can't be done offline. `SMALL=1 node eval.js` runs it. It needs 36 new requests for the app's search, or 72 to compare with today's search too.
+After that, two more answers:
+
+- The row shows the name that matched what was typed. That's the artist's own MusicBrainz name when it matched, and otherwise the name the matching records credit most often. So "takanaka" shows "Masayoshi Takanaka" instead of 高中正義, and a tap still loads the artist by MusicBrainz id. Takanaka is the only one of the 36 queries whose row name changed. A unit test and a browser test cover it.
+- The new search was rescored with "Include 45s and 10" records" on.
+
+### With 45s and 10" records on
+
+With that setting on, the app sends a different query, so this took new requests. There were 36 replies, fetched one at a time, plus 29 retries after 503s. The replies are saved, and `SMALL=1` rescores them offline. Only the new search was run, not today's.
+
+| Approach | Main set | Fresh set | Wrong artist rows on album queries |
+|---|---:|---:|---:|
+| smart | 21/26 | 10/10 | n/a |
+| smart+found-artist (the branch) | 26/26 | 10/10 | 3 of 19, and 3 of 8 |
+
+These are the same numbers as with the setting off. `SMALL=1 node check-app.js` confirms the app matches them on all 36 queries. What changed:
+
+- "the the" has 2 of its top 3 by The The instead of 1. The row already named them either way.
+- Kid A shows 2000 instead of 2016. Its first vinyl was a pair of 10" records, and with the setting off the app dates it by its first LP. That's how the app dates records, not a search problem.
 
 ## How it was tested
 
@@ -443,10 +460,7 @@ I'd pick the smarter box. It wins on the numbers without assuming people use a c
 
 ## Questions for the user
 
-### Open, from iteration 2
-
-1. **Which name should the row show?** It shows the artist's name as MusicBrainz files it, the same as the Discography tab. So "takanaka" shows "高中正義", while the records credit "Masayoshi Takanaka". Recommended: show the credited name that matched what was typed, since that's what the person recognizes.
-2. **Spend requests on the 45s and 10" rescore?** It needs 36 requests for the app's search, or 72 with today's search for comparison. Recommended: 36, the app's search only, one at a time.
+None are open. Both questions from iteration 2 got a yes: the row shows the credited name that matched, and the 45s and 10" rescore ran on the new search only.
 
 ### Answered after iteration 1
 
@@ -463,7 +477,7 @@ I'd pick the smarter box. It wins on the numbers without assuming people use a c
 2. Try the search in real use for a while, and note any search that feels wrong. Those become test queries.
 3. Grow the fresh set to 30 or more queries, ideally from records the user owns, and rerun all approaches on it.
 4. Cut wrong artist rows. One idea: hide the row when an album titled exactly like the text is by a different artist that has many more pressings.
-5. Check the 45s and 10" setting. All runs here had it off, and it needs new requests (see iteration 2).
+5. Done in iteration 2: the 45s and 10" setting. The new search scores the same with it on.
 
 ## Rerunning
 
@@ -477,7 +491,7 @@ node report.js summary current smart  # print a table; also: cases, matrix, deta
 
 Without `OFFLINE=1`, a missing reply is fetched one request at a time, 3 seconds apart, with the `recordcatalogapp-dev/0.1` User-Agent, and saved to `cache.json.gz`.
 
-The approaches run on the app's search code as it was before this work (commit `bf604df`), so "current" stays today's search. `node check-app.js` runs the app as it is now and checks its albums against the recorded smart results and its artist row against smart+found-artist. `SMALL=1` turns on 45s and 10" records and writes `results-small.json`; those replies aren't saved yet, so it fetches.
+The approaches run on the app's search code as it was before this work (commit `bf604df`), so "current" stays today's search. `node check-app.js` runs the app as it is now and checks its albums against the recorded smart results and its artist row against smart+found-artist. `SMALL=1` turns on 45s and 10" records and writes `results-small.json` and `results-holdout-small.json`. Replies are saved for smart and smart+found-artist only; other approaches would fetch.
 
 | File | What it holds |
 |---|---|
@@ -490,4 +504,5 @@ The approaches run on the app's search code as it was before this work (commit `
 | `mbcache.js` | Fetches and saves replies. |
 | `report.js` | Prints the tables in this page. |
 | `results.json`, `results-holdout.json` | Scores and the top 5 for each approach and query. |
+| `results-small.json`, `results-holdout-small.json` | The same for smart and smart+found-artist with 45s and 10" records on. |
 | `cache.json.gz` | The saved replies, trimmed to the fields the app reads. |

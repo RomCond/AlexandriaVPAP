@@ -1,0 +1,902 @@
+{
+ "smart": {
+  "radiohead": {
+   "input": "radiohead",
+   "hit": false,
+   "byArtist": 0,
+   "rank": 8,
+   "artistRank": null,
+   "count": 41,
+   "cell": "0/3",
+   "top": [
+    "Greenhouse Effect vs. Radiohead - Greenhouse Effect vs. Radiohead (2005)",
+    "Cage - Radiohead (1997)",
+    "Wesley Willis - Radiohead (1994)",
+    "Radiohead - Kid A (2000)",
+    "Radiohead - TKOL RMX1 (2011)"
+   ]
+  },
+  "miles": {
+   "input": "miles davis",
+   "hit": true,
+   "byArtist": 3,
+   "rank": null,
+   "artistRank": null,
+   "count": 15,
+   "cell": "**3/3**",
+   "top": [
+    "Miles Davis - Miles Davis, Vol. 2 (1953)",
+    "Miles Davis - The Essential Miles Davis (2016)",
+    "Miles Davis - Miles Davis and Horns (1956)",
+    "Miles Davis - Miles Davis Quartet (1954)",
+    "Miles Davis - Miles Davis (1959)"
+   ]
+  },
+  "television": {
+   "input": "television",
+   "hit": false,
+   "byArtist": 1,
+   "rank": 9,
+   "artistRank": null,
+   "count": 24,
+   "cell": "1/3",
+   "top": [
+    "Television - Television (1992)",
+    "TELEVISION - TELEVISION (2026)",
+    "Red Television - Red Television (1971)",
+    "Japanese Television - Japanese Television (2018)",
+    "Television Soup - Television Soup"
+   ]
+  },
+  "low": {
+   "input": "low",
+   "hit": false,
+   "byArtist": 0,
+   "rank": null,
+   "artistRank": null,
+   "count": 80,
+   "cell": "0/3",
+   "top": [
+    "LOW - LOW (2026)",
+    "Toner Low - Toner Low (2006)",
+    "Low Roar - Low Roar (2011)",
+    "Bruce Low - Bruce Low (2006)",
+    "Shy, Low - Shy, Low (2012)"
+   ]
+  },
+  "yes": {
+   "input": "yes",
+   "hit": true,
+   "byArtist": 3,
+   "rank": null,
+   "artistRank": null,
+   "count": 8,
+   "cell": "**3/3**",
+   "top": [
+    "Yes - Yes (1969)",
+    "Yes - The Yes Album (1971)",
+    "Yes - Classic Yes (1981)",
+    "Yes, Mayhem - Yes, Mayhem (2010)",
+    "Yes Ma’am - Yes Ma’am (2013)"
+   ]
+  },
+  "can": {
+   "input": "can",
+   "hit": false,
+   "byArtist": 1,
+   "rank": null,
+   "artistRank": null,
+   "count": 45,
+   "cell": "1/3",
+   "top": [
+    "CAN - Can (1978)",
+    "Can Can Gang - Can Can (1993)",
+    "Can Can - Can Can (2002)",
+    "CAN - Can-Can (1978)",
+    "Can Can - Can Rap (2005)"
+   ]
+  },
+  "thethe": {
+   "input": "the the",
+   "hit": false,
+   "byArtist": 2,
+   "rank": null,
+   "artistRank": null,
+   "count": 50,
+   "cell": "2/3",
+   "top": [
+    "The Band - The Band (2000)",
+    "The The - Armageddon Days Are Here (Again) (1989)",
+    "The The - Hyena (A Soundtrack by The The) (2015)",
+    "The The - Hanky Panky (1995)",
+    "The Beatles - The Beatles (1976)"
+   ]
+  },
+  "okc": {
+   "input": "ok computer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 40,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "OK Vancouver OK - Outside Computer (2022)",
+    "Various Artists - OK Computer Turns 10 (2007)",
+    "ShitLips - OK Computer Part 2 (2018)"
+   ]
+  },
+  "rumours": {
+   "input": "rumours",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "count": 18,
+   "cell": "**2**",
+   "top": [
+    "The Rumours - The Rumours (2014)",
+    "Fleetwood Mac - Rumours (1977)",
+    "Rumours - How Many Roses (2020)",
+    "Rumours - Shapes (2016)",
+    "Rumours - Megamix (2018)"
+   ]
+  },
+  "rhkid": {
+   "input": "radiohead kid",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 42,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - Kid A (2000)",
+    "Alex Schaaf - Radiohead’s Kid A: Re‐imagined (2010)",
+    "Radiohead - KID A MNESIA (2021)",
+    "Wooden Elephant - Landscapes, Knives & Glue – Radiohead's Kid a Recycled (2021)",
+    "Vitamin String Quartet - Strung Out on Kid A: The String Quartet Tribute to Radiohead (2004)"
+   ]
+  },
+  "aja": {
+   "input": "steely dan aja",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 9,
+   "cell": "**1**",
+   "top": [
+    "Steely Dan - Aja (1977)",
+    "Steely Dan - Aja (1977)",
+    "Steely Dan - Steely Dan (1978)",
+    "AJA - AJA (2018)",
+    "Steely Dan - Four Tracks From Steely Dan (1977)"
+   ]
+  },
+  "kidarh": {
+   "input": "kid a radiohead",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 35,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - Kid A (2000)",
+    "Radiohead - KID A MNESIA (2021)",
+    "Alex Schaaf - Radiohead’s Kid A: Re‐imagined (2010)",
+    "Vitamin String Quartet - Strung Out on Kid A: The String Quartet Tribute to Radiohead (2004)",
+    "Wooden Elephant - Landscapes, Knives & Glue – Radiohead's Kid a Recycled (2021)"
+   ]
+  },
+  "tago": {
+   "input": "can tago mago",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 40,
+   "cell": "**1**",
+   "top": [
+    "Can - Tago Mago (1971)",
+    "CAN - Can (1978)",
+    "Mägo de Oz - Mägo de Oz (1994)",
+    "Can - Can With Piano (2001)",
+    "Can Can Gang - Can Can (1993)"
+   ]
+  },
+  "soulmining": {
+   "input": "the the soul mining",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 70,
+   "cell": "**1**",
+   "top": [
+    "The The - Soul Mining (1983)",
+    "The The - Soul Mining (Deluxe Edition) (2014)",
+    "The The - Soul Mining (1986)",
+    "Rita MacNeil with The Men of the Deeps - Mining the Soul (2001)",
+    "Soul Asylum - The Silver Lining (2022)"
+   ]
+  },
+  "bowielow": {
+   "input": "bowie low",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 49,
+   "cell": "**1**",
+   "top": [
+    "David Bowie - Low (1977)",
+    "Philip Glass - “Low” Symphony (1993)",
+    "David Bowie - ChangesOneBowie (1984)",
+    "Philip Glass; Sinfonieorchester Basel, Dennis Russell Davies - Symphony no. 1 \"Low\" (From the Music of David Bowie and Brian Eno) (2014)",
+    "David Bowie with The Lower Third - Can’t Help Thinking About Me / And I Say to Myself (1966)"
+   ]
+  },
+  "weezer": {
+   "input": "weezer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 8,
+   "cell": "**1**",
+   "top": [
+    "Weezer - Weezer (1994)",
+    "Weezer - Weezer (2001)",
+    "Weezer - Weezer (2008)",
+    "Weezer - Weezer (Deluxe Edition) (2009)",
+    "Weezer - Weezer (2016)"
+   ]
+  },
+  "weezerblue": {
+   "input": "weezer blue",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 21,
+   "cell": "**1**",
+   "top": [
+    "Weezer - Weezer (1994)",
+    "Trashdog - Weezer's Blue Album (2024)",
+    "Weezer - SZNZ: Spring (2023)",
+    "Weezer / Wavves - Fake Smiles and Nervous Laughter / You Gave Your Love to Me Softly (2016)",
+    "The Mission - Blue"
+   ]
+  },
+  "boston": {
+   "input": "boston",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 27,
+   "cell": "**1**",
+   "top": [
+    "Boston - Boston (1976)",
+    "Eagle Boston - Eagle Boston (2010)",
+    "Boston Babies - Boston Babies (2024)",
+    "Boston Pops Orchestra - Boston Tea Party (1958)",
+    "Boston George - Baking Soda Boston (2019)"
+   ]
+  },
+  "okcomp": {
+   "input": "ok comp",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "count": 36,
+   "cell": "**2**",
+   "top": [
+    "OK Vancouver OK - Outside Computer (2022)",
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "OK Hotel - Come and Find Me (2023)",
+    "Oh-OK - The Complete Recordings (2011)"
+   ]
+  },
+  "dsotm": {
+   "input": "dark side of the mo",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 30,
+   "cell": "**1**",
+   "top": [
+    "Pink Floyd - The Dark Side of the Moon (1973)",
+    "The Fargone Beauties - Dark Side of the Moo",
+    "The Moonies - The Dark Side of the Moonies (1985)",
+    "The Flaming Lips & Stardeath and White Dwarfs with Henry Rollins & Peaches - The Dark Side of the Moon (2010)",
+    "Medicine Head - Dark Side of the Moon (1972)"
+   ]
+  },
+  "puppets": {
+   "input": "metalica master of puppets",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 10,
+   "cell": "**1**",
+   "top": [
+    "Metallica - Master of Puppets (1986)",
+    "Metallica - Master of Puppets (Deluxe Edition) (2017)",
+    "Metallica - Master of Puppets (1986)",
+    "The Scorched Earth Orchestra - Plays Metallica's Master of Puppets (2006)",
+    "Neville Elliott - Metallica’s Master of Puppets but in the Crash Bandicoot Soundfont (2023)"
+   ]
+  },
+  "radiohed": {
+   "input": "radiohed ok computer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 41,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "Vitamin String Quartet - Strung Out on OK Computer: The String Quartet Tribute to Radiohead (2001)",
+    "OK Go - OK Go",
+    "OK Vancouver OK - Outside Computer (2022)"
+   ]
+  },
+  "rumors": {
+   "input": "fleetwod mac rumors",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 6,
+   "cell": "**1**",
+   "top": [
+    "Fleetwood Mac - Rumours (1977)",
+    "Vitamin String Quartet - Rumors: The String Quartet Tribute To Fleetwood Mac (2000)",
+    "Fleetwood Mac - Rumours Live",
+    "Fleetwood Mac - The Alternate Rumours (2020)",
+    "Trevor Exter - Fleetwood Mac Rumours: Solo Cello"
+   ]
+  },
+  "takanaka": {
+   "input": "takanaka rainbow goblins",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 27,
+   "cell": "**1**",
+   "top": [
+    "Masayoshi Takanaka - 虹伝説 THE RAINBOW GOBLINS (1981)",
+    "Rainbow - Ritchie Blackmore’s Rainbow (1975)",
+    "Rainbow - The Best of Rainbow (1980)",
+    "Rainbow Brown - Rainbow Brown (1981)",
+    "RAINBOW - Over The Rainbow (2012)"
+   ]
+  },
+  "kino": {
+   "input": "кино группа крови",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 53,
+   "cell": "**1**",
+   "top": [
+    "Кино - Группа крови (1989)",
+    "Кино - Кино в Севкабеле (2021)",
+    "Кино - Чёрный альбом (1990)",
+    "Кровосток - Река Крови (2004)",
+    "Кино - Ночь (1988)"
+   ]
+  },
+  "sigur": {
+   "input": "sigur ros agaetis",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 31,
+   "cell": "**1**",
+   "top": [
+    "Sigur Rós - Ágætis byrjun (2000)",
+    "Sigur Rós - Kveikur (2013)",
+    "Sigur Rós - Takk… (2005)",
+    "Sigur Rós - Með suð í eyrum við spilum endalaust (2008)",
+    "Sigur Rós - Valtari (2012)"
+   ]
+  }
+ },
+ "smart+found-artist": {
+  "radiohead": {
+   "input": "radiohead",
+   "hit": true,
+   "byArtist": 0,
+   "rank": 8,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 41,
+   "cell": "**artist row**",
+   "top": [
+    "Greenhouse Effect vs. Radiohead - Greenhouse Effect vs. Radiohead (2005)",
+    "Cage - Radiohead (1997)",
+    "Wesley Willis - Radiohead (1994)",
+    "Radiohead - Kid A (2000)",
+    "Radiohead - TKOL RMX1 (2011)"
+   ],
+   "artists": [
+    "Radiohead"
+   ]
+  },
+  "miles": {
+   "input": "miles davis",
+   "hit": true,
+   "byArtist": 3,
+   "rank": null,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 15,
+   "cell": "**artist row**",
+   "top": [
+    "Miles Davis - Miles Davis, Vol. 2 (1953)",
+    "Miles Davis - The Essential Miles Davis (2016)",
+    "Miles Davis - Miles Davis and Horns (1956)",
+    "Miles Davis - Miles Davis Quartet (1954)",
+    "Miles Davis - Miles Davis (1959)"
+   ],
+   "artists": [
+    "Miles Davis"
+   ]
+  },
+  "television": {
+   "input": "television",
+   "hit": true,
+   "byArtist": 1,
+   "rank": 9,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 24,
+   "cell": "**artist row**",
+   "top": [
+    "Television - Television (1992)",
+    "TELEVISION - TELEVISION (2026)",
+    "Red Television - Red Television (1971)",
+    "Japanese Television - Japanese Television (2018)",
+    "Television Soup - Television Soup"
+   ],
+   "artists": [
+    "Television"
+   ]
+  },
+  "low": {
+   "input": "low",
+   "hit": true,
+   "byArtist": 0,
+   "rank": null,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 80,
+   "cell": "**artist row**",
+   "top": [
+    "LOW - LOW (2026)",
+    "Toner Low - Toner Low (2006)",
+    "Low Roar - Low Roar (2011)",
+    "Bruce Low - Bruce Low (2006)",
+    "Shy, Low - Shy, Low (2012)"
+   ],
+   "artists": [
+    "Low"
+   ]
+  },
+  "yes": {
+   "input": "yes",
+   "hit": true,
+   "byArtist": 3,
+   "rank": null,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 8,
+   "cell": "**artist row**",
+   "top": [
+    "Yes - Yes (1969)",
+    "Yes - The Yes Album (1971)",
+    "Yes - Classic Yes (1981)",
+    "Yes, Mayhem - Yes, Mayhem (2010)",
+    "Yes Ma’am - Yes Ma’am (2013)"
+   ],
+   "artists": [
+    "Yes"
+   ]
+  },
+  "can": {
+   "input": "can",
+   "hit": true,
+   "byArtist": 1,
+   "rank": null,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 45,
+   "cell": "**artist row**",
+   "top": [
+    "CAN - Can (1978)",
+    "Can Can Gang - Can Can (1993)",
+    "Can Can - Can Can (2002)",
+    "CAN - Can-Can (1978)",
+    "Can Can - Can Rap (2005)"
+   ],
+   "artists": [
+    "Can"
+   ]
+  },
+  "thethe": {
+   "input": "the the",
+   "hit": true,
+   "byArtist": 2,
+   "rank": null,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 50,
+   "cell": "**artist row**",
+   "top": [
+    "The Band - The Band (2000)",
+    "The The - Armageddon Days Are Here (Again) (1989)",
+    "The The - Hyena (A Soundtrack by The The) (2015)",
+    "The The - Hanky Panky (1995)",
+    "The Beatles - The Beatles (1976)"
+   ],
+   "artists": [
+    "The The"
+   ]
+  },
+  "okc": {
+   "input": "ok computer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 40,
+   "cell": "**1** (wrong row)",
+   "top": [
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "OK Vancouver OK - Outside Computer (2022)",
+    "Various Artists - OK Computer Turns 10 (2007)",
+    "ShitLips - OK Computer Part 2 (2018)"
+   ],
+   "artists": [
+    "Computer"
+   ]
+  },
+  "rumours": {
+   "input": "rumours",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 18,
+   "cell": "**2** (wrong row)",
+   "top": [
+    "The Rumours - The Rumours (2014)",
+    "Fleetwood Mac - Rumours (1977)",
+    "Rumours - How Many Roses (2020)",
+    "Rumours - Shapes (2016)",
+    "Rumours - Megamix (2018)"
+   ],
+   "artists": [
+    "Vicious Rumours"
+   ]
+  },
+  "rhkid": {
+   "input": "radiohead kid",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 42,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - Kid A (2000)",
+    "Alex Schaaf - Radiohead’s Kid A: Re‐imagined (2010)",
+    "Radiohead - KID A MNESIA (2021)",
+    "Wooden Elephant - Landscapes, Knives & Glue – Radiohead's Kid a Recycled (2021)",
+    "Vitamin String Quartet - Strung Out on Kid A: The String Quartet Tribute to Radiohead (2004)"
+   ],
+   "artists": [
+    "Radiohead"
+   ]
+  },
+  "aja": {
+   "input": "steely dan aja",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 9,
+   "cell": "**1**",
+   "top": [
+    "Steely Dan - Aja (1977)",
+    "Steely Dan - Aja (1977)",
+    "Steely Dan - Steely Dan (1978)",
+    "AJA - AJA (2018)",
+    "Steely Dan - Four Tracks From Steely Dan (1977)"
+   ],
+   "artists": [
+    "Steely Dan"
+   ]
+  },
+  "kidarh": {
+   "input": "kid a radiohead",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 35,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - Kid A (2000)",
+    "Radiohead - KID A MNESIA (2021)",
+    "Alex Schaaf - Radiohead’s Kid A: Re‐imagined (2010)",
+    "Vitamin String Quartet - Strung Out on Kid A: The String Quartet Tribute to Radiohead (2004)",
+    "Wooden Elephant - Landscapes, Knives & Glue – Radiohead's Kid a Recycled (2021)"
+   ],
+   "artists": [
+    "Radiohead"
+   ]
+  },
+  "tago": {
+   "input": "can tago mago",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 40,
+   "cell": "**1**",
+   "top": [
+    "Can - Tago Mago (1971)",
+    "CAN - Can (1978)",
+    "Mägo de Oz - Mägo de Oz (1994)",
+    "Can - Can With Piano (2001)",
+    "Can Can Gang - Can Can (1993)"
+   ],
+   "artists": [
+    "Can"
+   ]
+  },
+  "soulmining": {
+   "input": "the the soul mining",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 70,
+   "cell": "**1**",
+   "top": [
+    "The The - Soul Mining (1983)",
+    "The The - Soul Mining (Deluxe Edition) (2014)",
+    "The The - Soul Mining (1986)",
+    "Rita MacNeil with The Men of the Deeps - Mining the Soul (2001)",
+    "Soul Asylum - The Silver Lining (2022)"
+   ],
+   "artists": [
+    "The The"
+   ]
+  },
+  "bowielow": {
+   "input": "bowie low",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 49,
+   "cell": "**1**",
+   "top": [
+    "David Bowie - Low (1977)",
+    "Philip Glass - “Low” Symphony (1993)",
+    "David Bowie - ChangesOneBowie (1984)",
+    "Philip Glass; Sinfonieorchester Basel, Dennis Russell Davies - Symphony no. 1 \"Low\" (From the Music of David Bowie and Brian Eno) (2014)",
+    "David Bowie with The Lower Third - Can’t Help Thinking About Me / And I Say to Myself (1966)"
+   ],
+   "artists": [
+    "David Bowie"
+   ]
+  },
+  "weezer": {
+   "input": "weezer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 8,
+   "cell": "**1**",
+   "top": [
+    "Weezer - Weezer (1994)",
+    "Weezer - Weezer (2001)",
+    "Weezer - Weezer (2008)",
+    "Weezer - Weezer (Deluxe Edition) (2009)",
+    "Weezer - Weezer (2016)"
+   ],
+   "artists": [
+    "Weezer"
+   ]
+  },
+  "weezerblue": {
+   "input": "weezer blue",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 21,
+   "cell": "**1**",
+   "top": [
+    "Weezer - Weezer (1994)",
+    "Trashdog - Weezer's Blue Album (2024)",
+    "Weezer - SZNZ: Spring (2023)",
+    "Weezer / Wavves - Fake Smiles and Nervous Laughter / You Gave Your Love to Me Softly (2016)",
+    "The Mission - Blue"
+   ],
+   "artists": [
+    "Weezer"
+   ]
+  },
+  "boston": {
+   "input": "boston",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 27,
+   "cell": "**1**",
+   "top": [
+    "Boston - Boston (1976)",
+    "Eagle Boston - Eagle Boston (2010)",
+    "Boston Babies - Boston Babies (2024)",
+    "Boston Pops Orchestra - Boston Tea Party (1958)",
+    "Boston George - Baking Soda Boston (2019)"
+   ],
+   "artists": [
+    "Boston"
+   ]
+  },
+  "okcomp": {
+   "input": "ok comp",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 36,
+   "cell": "**2** (wrong row)",
+   "top": [
+    "OK Vancouver OK - Outside Computer (2022)",
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "OK Hotel - Come and Find Me (2023)",
+    "Oh-OK - The Complete Recordings (2011)"
+   ],
+   "artists": [
+    "Workers Comp"
+   ]
+  },
+  "dsotm": {
+   "input": "dark side of the mo",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "wrongRow": false,
+   "count": 30,
+   "cell": "**1**",
+   "top": [
+    "Pink Floyd - The Dark Side of the Moon (1973)",
+    "The Fargone Beauties - Dark Side of the Moo",
+    "The Moonies - The Dark Side of the Moonies (1985)",
+    "The Flaming Lips & Stardeath and White Dwarfs with Henry Rollins & Peaches - The Dark Side of the Moon (2010)",
+    "Medicine Head - Dark Side of the Moon (1972)"
+   ],
+   "artists": []
+  },
+  "puppets": {
+   "input": "metalica master of puppets",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 10,
+   "cell": "**1**",
+   "top": [
+    "Metallica - Master of Puppets (1986)",
+    "Metallica - Master of Puppets (Deluxe Edition) (2017)",
+    "Metallica - Master of Puppets (1986)",
+    "The Scorched Earth Orchestra - Plays Metallica's Master of Puppets (2006)",
+    "Neville Elliott - Metallica’s Master of Puppets but in the Crash Bandicoot Soundfont (2023)"
+   ],
+   "artists": [
+    "Metallica"
+   ]
+  },
+  "radiohed": {
+   "input": "radiohed ok computer",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 41,
+   "cell": "**1**",
+   "top": [
+    "Radiohead - OK Computer (1997)",
+    "Radiohead - OK Computer (Deluxe Edition) (2017)",
+    "Vitamin String Quartet - Strung Out on OK Computer: The String Quartet Tribute to Radiohead (2001)",
+    "OK Go - OK Go",
+    "OK Vancouver OK - Outside Computer (2022)"
+   ],
+   "artists": [
+    "Radiohead"
+   ]
+  },
+  "rumors": {
+   "input": "fleetwod mac rumors",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 6,
+   "cell": "**1**",
+   "top": [
+    "Fleetwood Mac - Rumours (1977)",
+    "Vitamin String Quartet - Rumors: The String Quartet Tribute To Fleetwood Mac (2000)",
+    "Fleetwood Mac - Rumours Live",
+    "Fleetwood Mac - The Alternate Rumours (2020)",
+    "Trevor Exter - Fleetwood Mac Rumours: Solo Cello"
+   ],
+   "artists": [
+    "Fleetwood Mac"
+   ]
+  },
+  "takanaka": {
+   "input": "takanaka rainbow goblins",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 27,
+   "cell": "**1**",
+   "top": [
+    "Masayoshi Takanaka - 虹伝説 THE RAINBOW GOBLINS (1981)",
+    "Rainbow - Ritchie Blackmore’s Rainbow (1975)",
+    "Rainbow - The Best of Rainbow (1980)",
+    "Rainbow Brown - Rainbow Brown (1981)",
+    "RAINBOW - Over The Rainbow (2012)"
+   ],
+   "artists": [
+    "高中正義"
+   ]
+  },
+  "kino": {
+   "input": "кино группа крови",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 53,
+   "cell": "**1**",
+   "top": [
+    "Кино - Группа крови (1989)",
+    "Кино - Кино в Севкабеле (2021)",
+    "Кино - Чёрный альбом (1990)",
+    "Кровосток - Река Крови (2004)",
+    "Кино - Ночь (1988)"
+   ],
+   "artists": [
+    "Кино"
+   ]
+  },
+  "sigur": {
+   "input": "sigur ros agaetis",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 31,
+   "cell": "**1**",
+   "top": [
+    "Sigur Rós - Ágætis byrjun (2000)",
+    "Sigur Rós - Kveikur (2013)",
+    "Sigur Rós - Takk… (2005)",
+    "Sigur Rós - Með suð í eyrum við spilum endalaust (2008)",
+    "Sigur Rós - Valtari (2012)"
+   ],
+   "artists": [
+    "Sigur Rós"
+   ]
+  }
+ }
+}
