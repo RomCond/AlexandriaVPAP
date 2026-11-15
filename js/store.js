@@ -396,6 +396,25 @@
     return null;
   }
 
+  // .xlsx and .numbers files are zip archives, and .xls files start with D0 CF 11 E0.
+  const SPREADSHEET_SIGNATURES = [[0x50, 0x4b, 0x03, 0x04], [0xd0, 0xcf, 0x11, 0xe0]];
+
+  /*
+   * The text in a chosen file, from its bytes. Excel saves "Unicode Text" as UTF-16 and, on Windows,
+   * CSV as Windows-1252, so a file that isn't valid UTF-8 is read as Windows-1252.
+   */
+  function fileText(bytes) {
+    if (SPREADSHEET_SIGNATURES.some((signature) => signature.every((byte, i) => bytes[i] === byte))) {
+      throw new Error("The app can't read Excel or Numbers files yet. Save the sheet as CSV, then choose the CSV file.");
+    }
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (e) {
+      return new TextDecoder('windows-1252').decode(bytes);
+    }
+  }
+
   // A backup is a JSON object, or a JSON array of records from an early version.
   const BACKUP_START = /^\s*(?:\{|\[\s*[{\]])/;
 
@@ -858,6 +877,7 @@
     compareDiscography,
     pickRandom,
     parseRecordList,
+    fileText,
     readImport,
     similarity,
     bestAlbumMatch,

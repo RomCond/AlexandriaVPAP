@@ -180,6 +180,16 @@ test('backups round trip and do not create duplicates', () => {
   assert.throws(() => restore(target, '{"hello": 1}'), /look like/);
 });
 
+test('fileText reads UTF-8 and the encodings Excel saves text in, and turns away spreadsheet files', () => {
+  assert.equal(S.fileText(new TextEncoder().encode('﻿Artist,Title\nMotörhead,Ace of Spades')), 'Artist,Title\nMotörhead,Ace of Spades');
+  const windows1252 = Uint8Array.from([...'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite'], (ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0)));
+  assert.equal(S.fileText(windows1252), 'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite', 'CSV saved by Excel on Windows');
+  const utf16 = Uint8Array.from([0xff, 0xfe, ...Buffer.from('Artist\tTitle\nBjörk\tPost', 'utf16le')]);
+  assert.equal(S.fileText(utf16), 'Artist\tTitle\nBjörk\tPost', 'Unicode Text saved by Excel');
+  assert.throws(() => S.fileText(Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00])), /Excel or Numbers.*CSV/, '.xlsx and .numbers');
+  assert.throws(() => S.fileText(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1])), /Excel or Numbers.*CSV/, 'old .xls');
+});
+
 test('readImport knows a backup from a list that starts with a bracket', () => {
   const source = S.createStore(S.memoryStorage());
   source.add({ artist: 'Portishead', title: 'Dummy', releaseGroupId: 'rg-dummy' });
