@@ -879,8 +879,8 @@ button.wished {
 /* The header logo, drawn again from the same markup through <use href="#logo-record">. */
 .empty-logo {
   display: block;
-  width: 120px;
-  height: 120px;
+  width: 96px;
+  height: 96px;
   margin: 0 auto 18px;
 }
 
