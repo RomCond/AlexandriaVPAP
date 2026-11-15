@@ -340,7 +340,7 @@ test('readImport reads "Artist - Title" lines, keeps notes and folds repeats', (
 
 test('readImport reads a spreadsheet saved as CSV by the names in its first row', () => {
   const read = S.readImport([
-    'Artist,Album,Year,Format,Label,Notes',
+    'Artist,Album,Year,Format,Label,Notes,Price',
     'Steely Dan,Aja,1977,LP,ABC,',
     '"Crosby, Stills & Nash",Crosby Stills & Nash,1969-05-29,Vinyl,Atlantic,"Gatefold, ""first press"""',
     'T. Rex,Teenage Dream,1974,"7""",EMI,"Bought in',
@@ -357,8 +357,8 @@ test('readImport reads a spreadsheet saved as CSV by the names in its first row'
     '',
   ].join('\r\n'));
   assert.equal(read.kind, 'table');
-  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Notes']);
-  assert.deepEqual(read.ignored, ['Label']);
+  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Label', 'Notes']);
+  assert.deepEqual(read.ignored, ['Price']);
   assert.deepEqual(read.unreadable, ['No Artist, 2000, LP'], 'a blank row is skipped, a row without an artist is listed');
   assert.deepEqual(read.notVinyl, ['Prince, Purple Rain, 1984, Cassette', 'Björk, Post, 1995, CD, Single'], 'CD and cassette rows are left out');
   assert.equal(read.merged, 1);
@@ -366,15 +366,21 @@ test('readImport reads a spreadsheet saved as CSV by the names in its first row'
   assert.equal(read.items.length, 7);
   assert.equal(byTitle['In Rainbows'].format, 'Double LP', 'a vinyl record with a CD inside is vinyl');
   assert.equal(byTitle.Third.format, null, 'a format the app has no name for is left to Add as');
-  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: '' });
+  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: 'Label: ABC' });
   assert.deepEqual(byTitle['Crosby Stills & Nash'], {
-    artist: 'Crosby, Stills & Nash', title: 'Crosby Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold, "first press"',
+    artist: 'Crosby, Stills & Nash', title: 'Crosby Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold, "first press"; Label: Atlantic',
   }, 'quoted cells keep their commas and quotes');
-  assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', 'Bought in\nLondon']);
+  assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', 'Bought in\nLondon; Label: EMI']);
   assert.deepEqual(byTitle['Moving Pictures'], {
-    artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: 'Signed; VG+; 2 copies',
+    artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: 'Signed; VG+; Label: Mercury; 2 copies',
   }, 'brackets become notes and repeats fold, as in a typed list');
   assert.deepEqual([byTitle['Pinkerton (Deluxe Edition)'].format, byTitle['Pinkerton (Deluxe Edition)'].year], ['Box set', 2010]);
+});
+
+test('readImport keeps label, catalog number and condition columns in the notes', () => {
+  const read = S.readImport('Artist,Title,Record Label,Cat. No.,Media Condition,Comments\nRush,2112,Mercury,SRM-1-1079,VG+,Gatefold\nRush,Signals,,,,');
+  assert.deepEqual(read.ignored, []);
+  assert.deepEqual(read.items.map((item) => item.notes), ['Gatefold; Label: Mercury; Catalog number: SRM-1-1079; Condition: VG+', '']);
 });
 
 test('readImport reads TSV and semicolon CSV, and lines without column names as a typed list', () => {

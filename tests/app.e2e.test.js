@@ -679,7 +679,7 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
 
     // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
     const csv = [
-      'Artist,Album,Year,Format,Label',
+      'Artist,Album,Year,Format,Label,Price',
       'Portishead,Dummy,1994,LP,Go! Beat',
       '"Crosby, Stills & Nash",Crosby Stills & Nash,1969,LP,Atlantic',
       'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
@@ -692,7 +692,7 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
     await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
     assert.equal(await text(page, '#import-file-name'), 'records.csv');
     const summary = await text(page, '#import-summary');
-    assert.match(summary, /Read the Artist, Album, Year and Format columns and left out the Label column\./);
+    assert.match(summary, /Read the Artist, Album, Year, Format and Label columns and left out the Price column\./);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
     assert.match(summary, /1 row is a CD or cassette, so it's left out\.[\s\S]*Prince, Purple Rain, 1984, Cassette, Warner Bros\./);
@@ -704,9 +704,9 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
     assert.equal(await text(page, '#nav-count'), '4');
 
     const added = Object.fromEntries((await records()).map((r) => [r.title, [r.artist, r.year, r.format, r.notes]]));
-    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', '']);
-    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed'], 'the umlaut survives and 7" is a 45');
-    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', ''], 'no format in the file, so Add as decides');
+    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', 'Label: Atlantic']);
+    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed; Label: Bronze'], 'the umlaut survives and 7" is a 45');
+    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', 'Label: One Little Indian'], 'no format in the file, so Add as decides');
     await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
 
     assert.deepEqual(errors, []);

@@ -266,7 +266,7 @@
    * become notes, like "(Signed)" or "(I have 2)", except deluxe or expanded editions, which stay in
    * the title; "(Single)" or "(45)" also makes it a 45 unless a format is given.
    */
-  function readEntry({ artist, title, year = null, format = null, notes = '' }) {
+  function readEntry({ artist, title, year = null, format = null, notes = [] }) {
     const name = String(artist || '').trim();
     let rest = String(title || '').trim();
     const found = [];
@@ -280,7 +280,7 @@
       noteFormat = noteFormat || formatFromNote(note);
     }
     if (!name || !rest) return null;
-    return { artist: name, title: rest, year: parseYear(year), format: format || noteFormat, notes: notes ? [...found, notes] : found };
+    return { artist: name, title: rest, year: parseYear(year), format: format || noteFormat, notes: [...found, ...notes.filter(Boolean)] };
   }
 
   /*
@@ -345,7 +345,12 @@
     year: ['year', 'release year', 'released', 'release date'],
     format: ['format', 'media', 'medium'],
     notes: ['notes', 'note', 'comments', 'comment'],
+    label: ['label', 'record label'],
+    catalog: ['catalog', 'catalog number', 'catalog no', 'catalogue', 'catalogue number', 'catalogue no', 'cat no', 'catno'],
+    condition: ['condition', 'media condition', 'record condition'],
   };
+  // Columns kept in a record's notes, and the name each gets there, as in "Label: Mercury".
+  const NOTE_COLUMNS = { label: 'Label', catalog: 'Catalog number', condition: 'Condition' };
   const DELIMITERS = [',', '\t', ';'];
   const YEAR_IN_DATE = /\b(?:19|20)\d\d\b/;
 
@@ -409,7 +414,7 @@
       const [head, ...rows] = splitRows(lines, delimiter).filter((cells) => cells.some((cell) => cell.trim()));
       const at = head && readHeader(head);
       if (!at) continue;
-      const cell = (cells, field) => (field in at ? cells[at[field]] || '' : '');
+      const cell = (cells, field) => (field in at ? (cells[at[field]] || '').trim() : '');
       const entries = [];
       const unreadable = [];
       const notVinyl = [];
@@ -423,7 +428,7 @@
           title: cell(cells, 'title'),
           year: (YEAR_IN_DATE.exec(cell(cells, 'year')) || [null])[0],
           format: formatFromColumn(cell(cells, 'format')),
-          notes: cell(cells, 'notes').trim(),
+          notes: [cell(cells, 'notes'), ...Object.entries(NOTE_COLUMNS).map(([field, name]) => cell(cells, field) && `${name}: ${cell(cells, field)}`)],
         });
         if (entry) entries.push(entry);
         else unreadable.push(rowText(cells));
