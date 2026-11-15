@@ -987,10 +987,22 @@
   // with the albums already in the collection taken out. Null when there's nothing to add.
   let importing = null;
 
+  // The file being imported, shown by name in place of the paste box: { name, text }, or { name, problem }
+  // when it can't be read. Null while you paste.
+  let chosenFile = null;
+
+  function chooseImportSource(file) {
+    chosenFile = file;
+    $('#import-paste').hidden = Boolean(file);
+    $('#import-chosen').hidden = !file;
+    $('#import-file-name').textContent = file ? file.name : '';
+    previewImport();
+  }
+
   function openImport() {
     $('#import-form').reset();
     $('#import-format').value = $('#add-format').value;
-    previewImport();
+    chooseImportSource(null);
     const dialog = $('#import-dialog');
     dialog.returnValue = '';
     dialog.showModal();
@@ -1010,9 +1022,13 @@
 
   // Says what the import will do, as text is typed, pasted or loaded from a file.
   function previewImport() {
+    if (chosenFile && chosenFile.problem) {
+      showImport(null, [importProblem(h('p', {}, chosenFile.problem))]);
+      return;
+    }
     let read;
     try {
-      read = S.readImport($('#import-form').elements.text.value);
+      read = S.readImport(chosenFile ? chosenFile.text : $('#import-form').elements.text.value);
     } catch (e) {
       showImport(null, [importProblem(h('p', {}, e.message))]);
       return;
@@ -1047,21 +1063,25 @@
     showImport(items.length ? { ...read, items } : null, summary);
   }
 
-  // Puts a chosen file's text in the box, where it can be checked and fixed like a pasted list.
   async function loadImportFile(event) {
     const file = event.target.files[0];
     event.target.value = '';
     if (!file) return;
+    let source;
     try {
       const bytes = await file.arrayBuffer().catch(() => {
         throw new Error("Couldn't read that file.");
       });
-      $('#import-form').elements.text.value = S.fileText(new Uint8Array(bytes));
+      source = { name: file.name, text: S.fileText(new Uint8Array(bytes)) };
     } catch (e) {
-      showImport(null, [importProblem(h('p', {}, e.message))]);
-      return;
+      source = { name: file.name, problem: e.message };
     }
-    previewImport();
+    chooseImportSource(source);
+  }
+
+  function pasteInstead() {
+    chooseImportSource(null);
+    $('#import-form').elements.text.focus();
   }
 
   function onImportDialogClosed() {
@@ -1284,6 +1304,7 @@
   $('#import-form').elements.text.addEventListener('input', previewImport);
   $('#import-file-btn').addEventListener('click', () => $('#import-file').click());
   $('#import-file').addEventListener('change', loadImportFile);
+  $('#import-paste-btn').addEventListener('click', pasteInstead);
   $('#import-cancel').addEventListener('click', () => $('#import-dialog').close('cancel'));
   $('#import-dialog').addEventListener('close', onImportDialogClosed);
   $('#export-btn').addEventListener('click', exportBackup);

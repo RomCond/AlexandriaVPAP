@@ -219,7 +219,11 @@
     <form method="dialog" id="import-form" class="edit-form">
       <h2 id="import-heading" tabindex="-1" autofocus>Import records</h2>
       <p class="muted small import-help">Choose a file or paste a list. A file can be a Record Catalog backup, a text list, or a spreadsheet saved as CSV with column names like <q>Artist</q> and <q>Album</q> in its first row. A list has one record per line with the artist, a dash, then the title: <q>Steely Dan - Aja</q>. Anything in brackets at the end, like <q>(Signed)</q>, is kept as a note, and <q>(45)</q> or <q>(Single)</q> makes it a 45. Covers, years and spellings are looked up after.</p>
-      <label class="field"><span>Paste a list</span><textarea name="text" rows="9" spellcheck="false" autocomplete="off" placeholder="Steely Dan - Aja&#10;Rush - Moving Pictures (Signed)&#10;Weezer - Pinkerton (Deluxe)"></textarea></label>
+      <label class="field" id="import-paste"><span>Paste a list</span><textarea name="text" rows="9" spellcheck="false" autocomplete="off" placeholder="Steely Dan - Aja&#10;Rush - Moving Pictures (Signed)&#10;Weezer - Pinkerton (Deluxe)"></textarea></label>
+      <div class="import-chosen" id="import-chosen" hidden>
+        <span class="import-file-name" id="import-file-name"></span>
+        <button type="button" class="link small" id="import-paste-btn">Paste instead</button>
+      </div>
       <div class="import-options">
         <button type="button" id="import-file-btn">Choose a file</button>
         <input type="file" id="import-file" accept=".json,.txt,.csv,.tsv,.xlsx,.xls,.numbers,application/json,text/plain,text/csv,text/tab-separated-values" hidden>

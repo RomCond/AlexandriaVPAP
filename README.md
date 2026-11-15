@@ -31,7 +31,7 @@ MusicBrainz allows about one request per second. The search box waits for a shor
 
 ## Importing records
 
-**Import** opens one screen for everything. Paste text into the box, or tap **Choose a file**, which puts the file's text in the box. The app works out what the text is, and before you add anything it says what it found:
+**Import** opens one screen for everything. Paste text into the box, or tap **Choose a file**. A chosen file shows by name in place of the box, and **Paste instead** brings the box back. The app works out what the text or file is, and before you add anything it says what it found:
 
 - A backup from **Export backup** shows how many records and wishlist records it holds. **Import backup** merges it, as described in [Where the data lives](#where-the-data-lives).
 - A spreadsheet saved as CSV or TSV needs column names in its first row, with one for the artist and one for the title. The app knows names such as Artist, Band or Album Artist for the artist, and Title, Album or Release for the title. It also reads a year, format or notes column, with names such as Year, Released, Format, Media, Notes or Comments. Commas, tabs and semicolons all work between columns. The import screen names the columns it read and the ones it left out.

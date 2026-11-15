@@ -544,6 +544,8 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
     await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), path.basename(backupPath), 'the backup shows by name, not as JSON');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
     assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');
     assert.equal(await text(page, '#import-submit'), 'Import backup');
     await page.click('#import-submit');
@@ -663,10 +665,17 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
 
     assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
     await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Steely Dan - Aja');
     const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]);
     await page.setInputFiles('#import-file', { name: 'records.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: zip });
     await page.locator('#import-summary', { hasText: "can't read Excel or Numbers files yet" }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.xlsx', 'the file shows by name in place of the paste box');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
     assert.ok(await page.locator('#import-submit').isDisabled());
+    await page.click('#import-paste-btn');
+    assert.ok(await page.locator('#import-chosen').isHidden());
+    assert.equal(await page.inputValue('#import-form [name=text]'), 'Steely Dan - Aja', 'Paste instead brings back what was pasted');
+    await page.locator('#import-summary', { hasText: '1 record to add.' }).waitFor();
 
     // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
     const csv = [
@@ -680,6 +689,7 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
     const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
     await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
     await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.csv');
     const summary = await text(page, '#import-summary');
     assert.match(summary, /Read the Artist, Album, Year and Format columns and left out the Label column\./);
     assert.match(summary, /1 record already in your collection is skipped/);

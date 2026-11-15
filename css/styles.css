@@ -841,6 +841,22 @@ button.wished {
 
 .import-help { margin: 8px 0 14px; }
 
+.import-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.import-file-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .import-options {
   display: flex;
   flex-wrap: wrap;
