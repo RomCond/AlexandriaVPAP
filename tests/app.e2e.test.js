@@ -263,6 +263,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(typedSearches.length, 1, `typing sent ${typedSearches.length} searches`);
     assert.match(typedSearches[0].searchParams.get('query'), /artist:\(radiohead ok comp comp\*\)/);
     assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.equal(await text(page, '#search-results .artist-row'), 'Radiohead · Artist · See all albums', 'the artist typed gets a row above the albums');
     await page.locator('#search-results .result').first().getByRole('button', { name: 'Add' }).click();
     await page.locator('#toast.show', { hasText: 'Added OK Computer' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '1');
@@ -544,6 +545,43 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a search for an artist opens their discography in one tap', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 375, height: 760 } });
+    await openTab(page, 'add');
+    const searchBox = page.locator('#search-form [name=q]');
+    const callsBefore = mbCalls.length;
+    await searchBox.fill('radiohead');
+    const row = page.locator('#search-results .artist-row');
+    await row.waitFor();
+    assert.equal(mbCalls.length - callsBefore, 1, 'the row comes from the search itself, with no request of its own');
+    assert.equal(await row.innerText(), 'Radiohead · Artist · See all albums');
+    assert.equal(await page.locator('#search-results li').first().getAttribute('class'), 'artist-row', 'the row is above the albums');
+    assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'no sideways scrolling on a phone');
+    await shot(page, '10-artist-row');
+
+    await row.getByRole('button', { name: /See all albums/ }).click();
+    await page.locator('#disco-name', { hasText: 'Radiohead' }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#discography');
+    assert.ok(mbCalls.some((url) => url.pathname === '/ws/2/release-group' && url.searchParams.get('artist') === 'a-radiohead'), 'it loads the artist by their MusicBrainz id');
+    assert.match(await text(page, '#disco-missing'), /OK Computer/);
+
+    // A barcode names no artist, so the row goes away
+    await openTab(page, 'add');
+    await searchBox.fill('0 724352 775324');
+    await searchBox.press('Enter');
+    await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+    assert.equal(await page.locator('#search-results .artist-row').count(), 0);
 
     assert.deepEqual(errors, []);
     await context.close();
