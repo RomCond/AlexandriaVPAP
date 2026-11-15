@@ -40,7 +40,10 @@
   ];
 
   const DAY = 24 * 60 * 60 * 1000;
-  const DISCOGRAPHY_MAX_AGE = 7 * DAY;
+  // A saved discography is refreshed in the background once it's a week old, and shown while that
+  // happens. After four weeks it's deleted, and the artist loads from scratch.
+  const DISCOGRAPHY_FRESH_FOR = 7 * DAY;
+  const DISCOGRAPHY_KEPT_FOR = 28 * DAY;
 
   // ---------- Text matching ----------
 
@@ -664,15 +667,19 @@
 
       getDiscography(artistId) {
         const entry = read(KEYS.discographies, {})[artistId];
-        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_MAX_AGE) return null;
+        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) return null;
         return entry;
+      },
+
+      discographyStale(entry) {
+        return Date.now() - entry.fetchedAt > DISCOGRAPHY_FRESH_FOR;
       },
 
       // A discography only gaining the groups that show with Vinyl only off keeps its fetchedAt.
       saveDiscography(artistId, data) {
         const cache = read(KEYS.discographies, {});
         for (const [id, entry] of Object.entries(cache)) {
-          if (Date.now() - entry.fetchedAt > 4 * DISCOGRAPHY_MAX_AGE) delete cache[id];
+          if (Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) delete cache[id];
         }
         cache[artistId] = { ...data, fetchedAt: data.fetchedAt || Date.now() };
         try {

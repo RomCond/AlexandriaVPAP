@@ -723,8 +723,7 @@
   // loading is true until every release has been checked for vinyl.
   let disco = null;
   let discoToken = 0;
-  let discoLoad = null; // stops the requests of the discography being loaded
-  let loadingGroupsFor = null; // the artist whose groups with no official release are loading
+  let discoLoad = null; // stops the requests under way for the artist on screen
   let currentMissing = [];
 
   // Picking another artist, or searching for one, stops the requests for the last one.
@@ -824,8 +823,7 @@
     }
   }
 
-  function discoStatus({ step, loaded, total }) {
-    const doing = step === 'groups' ? 'Loading the rest of the discography' : 'Checking which releases came out on vinyl';
+  function discoStatus(doing, { loaded, total }) {
     setStatus('#artist-status', total > 100 ? `${doing}… ${loaded} of ${total}` : `${doing}…`, 'busy');
   }
 
@@ -833,33 +831,62 @@
     disco = { ...data, artist: { id: artist.id, name: artist.name }, loading };
     renderDiscography();
     $('#disco-panel').hidden = false;
-    $('#disco-panel').setAttribute('aria-busy', String(loading));
+    $('#disco-panel').setAttribute('aria-busy', String(loading || Boolean(discoLoad)));
   }
 
-  // Studio albums show after the first request. The rest fills in as each page of releases arrives.
+  // Requests for the artist on screen are under way. The panel says so, and picking another artist
+  // or tapping Refresh stops them.
+  function startDiscoLoad() {
+    discoLoad = new AbortController();
+    $('#disco-panel').setAttribute('aria-busy', 'true');
+    return discoLoad.signal;
+  }
+
+  // What came in stays on screen. Refresh tries again.
+  function discoLoadFailed(e) {
+    discoLoad = null;
+    setStatus('#artist-status', e.message, 'error');
+    $('#disco-panel').setAttribute('aria-busy', 'false');
+  }
+
+  /*
+   * A saved copy shows at once. Once it's a week old, or on Refresh, a new copy loads behind it and
+   * takes its place when complete. Without one, the studio albums show after the first request and
+   * the rest fills in as each page of releases arrives, with no "Vinyl not confirmed" until the end.
+   */
   async function loadDiscography(artist, refresh) {
     const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
-    let data = refresh ? null : store.getDiscography(artist.id);
-    if (!data) {
-      const controller = new AbortController();
-      discoLoad = controller;
-      $('#disco-panel').hidden = true;
-      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
-      try {
-        const fetched = await mb.getDiscography(artist.id, (progress) => {
-          if (token !== discoToken) return;
-          showDiscography({ name: artist.name, ...progress.discography, fetchedAt: Date.now() }, artist, true);
-          discoStatus(progress);
-        }, { signal: controller.signal });
-        data = store.saveDiscography(artist.id, { name: artist.name, ...fetched });
-      } catch (e) {
-        if (token !== discoToken || e.name === 'AbortError') return;
-        // What came in stays on screen, still without "Vinyl not confirmed" labels. Refresh tries again.
-        setStatus('#artist-status', e.message, 'error');
-        $('#disco-panel').setAttribute('aria-busy', 'false');
+    const saved = store.getDiscography(artist.id);
+    if (saved) {
+      setStatus('#artist-status', '');
+      showDiscography(saved, artist, false);
+      if (!refresh && !store.discographyStale(saved)) {
+        loadAllGroups();
         return;
       }
+    }
+    const signal = startDiscoLoad();
+    const update = (progress) => {
+      if (token !== discoToken) return;
+      if (saved) {
+        discoStatus('Checking MusicBrainz for changes', progress);
+        return;
+      }
+      showDiscography({ name: artist.name, ...progress.discography, fetchedAt: Date.now() }, artist, true);
+      discoStatus(progress.step === 'groups' ? 'Loading the rest of the discography' : 'Checking which releases came out on vinyl', progress);
+    };
+    if (saved) setStatus('#artist-status', 'Checking MusicBrainz for changes…', 'busy');
+    else {
+      $('#disco-panel').hidden = true;
+      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
+    }
+    let data;
+    try {
+      data = store.saveDiscography(artist.id, { name: artist.name, ...(await mb.getDiscography(artist.id, update, { signal })) });
+    } catch (e) {
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
     }
     if (token !== discoToken) return;
     discoLoad = null;
@@ -871,27 +898,22 @@
   // With Vinyl only off, the list also shows albums, EPs and singles that have no official release,
   // mostly bootlegs. They're fetched the first time they're needed and kept with the discography.
   async function loadAllGroups() {
-    if (!disco || disco.loading || disco.allGroups || store.getPref('vinylOnly', true) || loadingGroupsFor === disco.artist.id) return;
+    if (!disco || disco.loading || disco.allGroups || store.getPref('vinylOnly', true) || discoLoad) return;
     const token = discoToken;
     const { artist, loading, ...saved } = disco;
-    const controller = new AbortController();
-    discoLoad = controller;
-    loadingGroupsFor = artist.id;
-    $('#disco-panel').setAttribute('aria-busy', 'true');
+    const signal = startDiscoLoad();
     setStatus('#artist-status', 'Loading the rest of the discography…', 'busy');
+    let whole;
     try {
-      const whole = await mb.addAllReleaseGroups(saved, artist.id, (progress) => token === discoToken && discoStatus(progress), { signal: controller.signal });
-      if (token !== discoToken) return;
-      discoLoad = null;
-      setStatus('#artist-status', '');
-      showDiscography(store.saveDiscography(artist.id, whole), artist, false);
+      whole = await mb.addAllReleaseGroups(saved, artist.id, (progress) => token === discoToken && discoStatus('Loading the rest of the discography', progress), { signal });
     } catch (e) {
-      if (token !== discoToken || e.name === 'AbortError') return;
-      setStatus('#artist-status', e.message, 'error');
-      $('#disco-panel').setAttribute('aria-busy', 'false');
-    } finally {
-      if (loadingGroupsFor === artist.id) loadingGroupsFor = null;
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
     }
+    if (token !== discoToken) return;
+    discoLoad = null;
+    setStatus('#artist-status', '');
+    showDiscography(store.saveDiscography(artist.id, whole), artist, false);
   }
 
   function enabledCategories() {

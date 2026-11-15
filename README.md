@@ -27,7 +27,7 @@ Any static host, such as GitHub Pages or Netlify, works too.
 
 The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist, and **Import backup** loads it somewhere else. Importing a backup merges it with what's there and skips albums you already have.
 
-MusicBrainz allows about one request per second. The search box waits for a short pause in typing and cancels searches you've typed past. The app keeps each discography for a week, and **Refresh** on an artist fetches it again. When MusicBrainz is busy or the connection drops, the app tries the request again after 2, 4, 8 and 16 seconds, then shows an error. On a device that's offline, the app shows the error after the first wait of 2 seconds.
+MusicBrainz allows about one request per second. The search box waits for a short pause in typing and cancels searches you've typed past. The app saves each discography you open and shows the saved copy at once next time. Once it's a week old, the app also loads a new copy behind it and swaps it in when it's complete. After four weeks it loads from scratch. **Refresh** on an artist loads a new copy the same way. When MusicBrainz is busy or the connection drops, the app tries the request again after 2, 4, 8 and 16 seconds, then shows an error. On a device that's offline, the app shows the error after the first wait of 2 seconds.
 
 ## Importing a list
 

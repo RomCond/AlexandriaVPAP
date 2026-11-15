@@ -557,6 +557,28 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
     assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
 
+    // A saved copy more than a week old still shows at once, while a new one loads behind it
+    await page.evaluate((key) => {
+      const saved = JSON.parse(localStorage.getItem(key));
+      saved['a-radiohead'].fetchedAt -= 10 * 24 * 60 * 60 * 1000;
+      localStorage.setItem(key, JSON.stringify(saved));
+    }, 'recordcatalog.discographies.v6');
+    await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
+    await discoReady(page);
+    let letRefreshThrough;
+    hold.browse = new Promise((resolve) => { letRefreshThrough = resolve; });
+    await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+    assert.match(await text(page, '#disco-updated'), /Updated 10 days ago/);
+    assert.match(await text(page, '#disco-missing'), /Pablo Honey\n1993 · Album\nVinyl not confirmed/, 'the saved copy keeps its labels');
+    assert.match(await text(page, '#artist-status'), /Checking MusicBrainz for changes/);
+    hold.browse = null;
+    letRefreshThrough();
+    await discoReady(page);
+    assert.match(await text(page, '#disco-updated'), /Updated just now/);
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+
     // Backup, wipe, restore
     await openTab(page, 'collection');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
