@@ -1,45 +1,62 @@
 # Random pick: showing the cover sooner
 
-Iteration 1 measured the first hop and compared options. Iteration 2 measures the archive.org hops and builds what the user chose. The options and recommendation below are still iteration 1's and will be updated at the end of iteration 2.
+Iteration 1 measured the first hop and compared options. Iteration 2 measured the archive.org hops, built what the user chose, and measured the result before and after.
 
-## Short answer
+## How it is now
 
-Preload the next pick. Today nothing loads before the tap, so the person waits for the whole redirect chain and a 1200px download every time. If the app picks the next record one tap ahead and loads its cover in the background, the next tap shows a cover the browser already holds. In a local check, showing a preloaded cover made no network request at all.
+Time from tapping **Pick a record** to the cover showing, on a throttled 4G connection, with real covers from the Cover Art Archive (medians, measured):
 
-For the first pick, start that preload when the Random page opens. Also show the 500px cover from the collection grid straight away when the grid has already loaded it, and swap in the 1200px cover when it arrives.
+| Case | Before | After |
+| --- | --- | --- |
+| A cover the collection grid has already loaded | 1.21 s | **0.005 s**. The sharp 1200px version fades in at 1.29 s. |
+| A cover the grid has not loaded, first time that record is picked | 1.17 s | Unchanged, about 1.2 s. Both versions make the same two downloads. |
+| A cover the grid has not loaded, picked before | 1.17 s | A 500px cover at 1.05 s, the sharp one at 1.22 s |
+| The colored background behind the pick, once the record has been picked or opened before | about 0.9 s | **0.006 s** |
+
+- The app opens on the collection, and the grid loads **63 covers** on a phone before any scrolling (measured, local). So in a collection of up to about 60 records, every pick shows its cover at once, as long as the collection has been on screen since the app opened.
+- In a bigger collection, the instant case covers the first 63 covers and any the person scrolled past. The rest take about 1.2 s, as before.
+- The colored background now shows at once for any record whose color the app has read before, on any visit, because the color is saved with the record and in backups.
+
+The 4G profile adds 165 ms of latency per request and limits the connection to 8.1 Mbps down. It sits on top of this cloud container's own network, which already takes about 150 ms per round trip through its proxy. So a phone on good 4G should see shorter absolute times (estimated). The before and after picks ran interleaved on the same setup, so the comparison holds.
 
 Every number below is labeled:
 
-- **Measured**: taken in this session.
-- **Estimated**: reasoned from measured numbers or from how browsers and networks work. Iteration 2 should measure these.
-- **Not measured**: could not be taken in this session.
+- **Measured**: taken in this investigation.
+- **Estimated**: reasoned from measured numbers or from how browsers and networks work.
 
-## What happens today
+## What changed in iteration 2
 
-When you tap **Pick a record**, `spin()` in `js/app.js` calls `showPick()`. In the same tick it does two things.
+The user's decisions after iteration 1: allow archive.org for measuring, no preloading, show the 500px cover first and fade in the 1200px one, keep 1200px, and keep each cover's color with the record.
 
-1. `tintWithAlbum()` calls `albumColor()`. That starts a detached `new Image()` for `front-250` with `crossOrigin = 'anonymous'`. When it loads, `mainColor()` draws it to a 32x32 canvas and picks the main color. The result is kept in memory per release group, for this page session only.
-2. `cover(record, 'lg')` inserts an `<img loading="lazy">` for `front-1200`. If that fails, it tries `front-500`.
+1. **The 500px cover shows first** (`cover()` in `js/app.js`). The big random pick lays the 1200px cover over the 500px one in two cases. One is when the collection has already loaded the 500px cover, which then shows at once from the browser's memory with no request. The other is when the record's color is already saved. Otherwise it asks for 1200px alone, and falls back to 500px if there is no 1200px cover, as before. Each cover image now fades in on its own (`.cover img.shown`).
+2. **The color is kept with the record** (`js/store.js`). The first color read is saved as `coverColor`, in the form `rgb(12 34 56)`. Later picks and the edit screen use it at once. Backups include it, because they export records as they are. A record whose release group changes loses its saved color. The store change is one field in `cleanRecord`, one line in `update`, and a `setCoverColor` method that saves without redrawing the screen. It merges cleanly with `claude/account-sync`, and the unit tests pass on the merged tree.
+3. **Tests.** The main browser test checks that a cover the list has loaded shows at once without a new request. A new browser test checks the 1200px-alone first pick, the saved color after a reload, the 500px-first display, and the fallback when a 1200px cover is missing. Two unit tests cover `coverColor`.
 
-Both requests go to `https://coverartarchive.org/release-group/<id>/front-<size>`. Nothing is requested before the tap. The cover fades in over 0.25 s once loaded (`.cover img` transition in `css/styles.css`).
+### Why the 500px cover is not always requested
 
-So the person waits for this:
+The user left open what to do for a cover the grid has not loaded, and asked for a measurement. One candidate was to request 500px and 1200px together and show whichever arrives first. Measured on the 4G profile, for covers the grid had not loaded:
 
-```
-tap -> hop 1: coverartarchive.org 307
-    -> hop 2: archive.org/download/... 302
-    -> hop 3: a storage server such as dn720706.ca.archive.org, 200
-    -> 1200px JPEG bytes -> decode -> 0.25 s fade
-```
+| Requests | Picks | First cover shows | Sharp cover shows | Downloaded |
+| --- | --- | --- | --- | --- |
+| 1200px alone, color still to read (before, and after on a first pick) | 25 | 1,185 ms | 1,185 ms | 288 KB |
+| 500px and 1200px together, color still to read | 15 | 1,017 ms | **1,783 ms** | 376 KB |
+| 1200px alone, color saved | 10 | 1,316 ms | 1,316 ms | 260 KB |
+| 500px and 1200px together, color saved (after) | 20 | **1,052 ms** | 1,222 ms | 346 KB |
 
-In parallel, the 250px color image runs through the same chain.
+With 90% bootstrap intervals for the differences (measured):
+
+- **While the color is still being read**, asking for both sizes means three downloads at once. The soft cover came 168 ms sooner, but the interval of -272 to +158 ms includes no gain. The sharp cover came **598 ms later**, interval +388 to +823 ms. So on a first pick the app asks for 1200px alone.
+- **With the color saved**, there are only two downloads. A cover showed **264 ms sooner**, interval -384 to -146 ms. The sharp one was no later: -94 ms, interval -208 to +104 ms. So once a record's color is saved, the app asks for both.
+
+One result is odd. "1200px alone, color saved" was slower than "1200px alone, color still to read", although it downloads less. Those picks all came from two runs made close together, so this is most likely drift in the network between runs. It shows how noisy single runs are. In the final run, two conditions that make identical requests differed by 176 ms. Treat differences under about 0.2 s as noise unless the pooled intervals say otherwise.
 
 ## How this was measured
 
-- Date: 2026-11-15. All requests ran from a cloud container through its egress proxy. A phone on Wi-Fi or 4G will see different round trip times.
+- Date: 2026-11-15. All outside requests ran from a cloud container through its egress proxy. A phone will see different round trip times.
 - In iteration 1, archive.org was not on this environment's network allowlist, so only hop 1 was measured. For iteration 2 the user allowed it. `measure-archive.sh` then followed the whole chain for 5 covers at 250, 500 and 1200px, one request at a time. The raw output is in `random-cover-speed/results-archive.tsv`.
-- The sandbox proxy reset two connections in the middle of a chain. Those two chains are missing a size. No request was refused.
-- Requests were few and mostly sequential: about 30 curl requests and three browser runs of 13 to 21 requests each to coverartarchive.org in iteration 1, and about 80 curl requests across the whole chain in iteration 2, at most 2 a second. The app's grid loads its 4 covers at once, as it does in real use.
+- `measure-tap-to-cover.js` ran 90 picks across five runs: one pick at a time, a fresh browser context for each, at phone size (390x844 at 3x), on the 4G profile, with the conditions interleaved and rotated. It uses no Playwright routes, because routing turns Chromium's HTTP cache off (measured). The raw picks are in `random-cover-speed/results-tap-to-cover.json`.
+- The sandbox proxy reset two connections in the middle of a chain. Each of those chains lost one size. No request was refused, and no browser pick failed.
+- Requests to the Cover Art Archive and archive.org: about 30 curl requests and 55 browser requests in iteration 1. About 85 curl requests and 90 picks of about 9 requests each in iteration 2. At most 2 a second from curl, and one pick at a time in the browser.
 - Scripts are in `docs/investigations/random-cover-speed/`. See [Rerunning](#rerunning).
 
 ## Findings
@@ -70,7 +87,7 @@ Pass 1 times every hop on a new connection, so it shows the most a hop can cost.
 
 | Hop | What | Time | Label |
 | --- | --- | --- | --- |
-| 1 | coverartarchive.org 307, new connection (curl, 15 chains in iteration 2) | 381 to 631 ms, median 424 ms. Without the connection setup: median 145 ms. | Measured |
+| 1 | coverartarchive.org 307, new connection (curl, 15 chains) | 381 to 631 ms, median 424 ms. Without the connection setup: median 145 ms. | Measured |
 | 1 | coverartarchive.org 307, kept-alive connection (curl, 14 requests) | 138 to 161 ms, median 149 ms | Measured |
 | 1 | Same, from Chromium (`fetch` with `redirect: 'manual'`, 14 requests) | 180 to 244 ms, after a first request of 607 to 671 ms | Measured |
 | 1 | `robots.txt` on the same host, kept-alive, for comparison | 148 to 154 ms, against 144 to 148 ms for lookups on that connection | Measured |
@@ -85,8 +102,6 @@ Hop 1 costs the same for 250, 500 and 1200. A static file on the same host takes
 
 In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and a new connection. Hop 1 took 520 to 743 ms in the app for 33 of 35 requests, with one at 232 ms and one at 1637 ms (measured, iteration 1). curl reached the same hosts over HTTP/2. A phone without this proxy should behave more like curl.
 
-In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and a new connection. Hop 1 took 520 to 743 ms in the app for 33 of 35 requests, with one at 232 ms and one at 1637 ms (measured). curl reached the same host over HTTP/2 and reused its connection. A phone without this proxy should behave more like curl. Treat the 520 to 743 ms as a sandbox worst case.
-
 ### 2. Image size
 
 - The sleeve on the Random page draws at **252 CSS px** on a 390px-wide phone. At 3x that is **756 device px** (measured).
@@ -99,11 +114,10 @@ In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and
 | Color sampling (`mainColor`) on this machine | 0.9 ms | 2.8 ms | 13.2 ms | Measured |
 | Bytes of a real cover (4 or 5 covers) | 22 to 40 KB, median 28 KB | 41 to 90 KB, median 83 KB | 66 to 340 KB, median 259 KB | Measured |
 | 1200px size compared with 500px, same cover | | | 1.6 to 4.0 times, median 3.2 | Measured |
-| Extra transfer time of 1200 over 500, phone, new connection | | | about 100 to 300 ms, 2 more round trips | Estimated |
 
-Decode and sampling times use JPEGs generated in the page. They are not real covers, and a phone CPU is slower, perhaps 3 to 5 times.
+Decode and sampling times use JPEGs generated in the page. They are not real covers, and a phone CPU is slower, perhaps 3 to 5 times (estimated).
 
-The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop metadata. The color read downloads a third of a 500px cover just to sample 32x32 pixels.
+The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop metadata. The color read downloads a third of a 500px cover just to sample 32x32 pixels. Saving the color means this happens once per record.
 
 | Cover | 250px | 500px | 1200px |
 | --- | --- | --- | --- |
@@ -113,19 +127,18 @@ The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop meta
 | I Might Be Wrong (e404b349) | 28,274 B | 90,093 B | 265,464 B |
 | In Rainbows: From the Basement (d2f48ef0) | cut by a proxy reset | 42,117 B | 67,315 B |
 
-### 3. Preloading and the color read
+### 3. When requests start, and the color read
 
-- **Nothing preloads today** (code and network log). Every request starts after the tap.
+- Before this work, nothing loaded before the tap (code and network log, iteration 1).
 - The 1200px request starts **3 to 14 ms after the tap** (9 picks, measured). `loading="lazy"` delays it by **2 to 13 ms** after the `<img>` goes in (measured). Chromium starts it at Low priority and raises it to High after layout. This is not worth changing.
-- The color read starts **1 to 4 ms after the tap** (measured), as a separate CORS request for the 250px cover. It runs in parallel with the cover, so it does not delay the cover directly. It does compete for bandwidth and goes through its own redirect chain.
-- The color is kept in memory per release group. Picking the same record again made no new 250px request (measured). It is lost on reload.
+- The color read starts **1 to 4 ms after the tap** (measured), as a separate CORS request for the 250px cover, through its own redirect chain. Before this work it ran on every visit. Now it runs once per record.
 - Sampling the color takes about 1 ms on this machine (measured). Almost all of the color's time is network.
 
 ### 4. Reusing covers the browser already has
 
-The random pick asks for `front-1200`. The grid asked for `front-500`. Different URLs, so **the grid's cover is never reused today** (measured: Kid A's 500px loaded in the grid, and the pick then requested 1200 and 250 anyway).
+Before this work, the random pick asked for `front-1200` and the grid for `front-500`. Different addresses, so the grid's cover was never reused (measured in iteration 1). Now the pick lays the grid's 500px cover underneath when it is loaded.
 
-`check-browser-reuse.js` tests Chromium's reuse rules against a local server that sends the same headers as the real 307. This tests browser behavior only, not archive.org's speed. It ran twice: once with an image that has `Cache-Control: max-age=86400`, and once with an image that has no cache headers. In iteration 2 the real storage-server headers turned out to sit in between: `Last-Modified` and `ETag`, plus `max-age=21600` on the `.us` servers only.
+`check-browser-reuse.js` tests Chromium's reuse rules against a local server that sends the same headers as the real 307. This tests browser behavior only, not archive.org's speed. It ran with an image that has `Cache-Control: max-age=86400`, and with one that has no cache headers. The real storage servers sit in between: `Last-Modified` and `ETag`, plus `max-age=21600` on the `.us` servers only.
 
 | Case | Requests made (redirect / image) | Label |
 | --- | --- | --- |
@@ -134,72 +147,81 @@ The random pick asks for `front-1200`. The grid asked for `front-500`. Different
 | Preload still in flight when the `<img>` is added | 1 / 1 for both together: the `<img>` joins the preload | Measured (local) |
 | Loaded in CORS mode (like the color read), then a plain `<img>` of the same URL | 1 / 0 if the image is cacheable, 1 / 1 if not | Measured (local) |
 | After a page reload, a URL loaded before | 1 / 0 if the image is cacheable, 1 / 1 if not | Measured (local) |
+| Any of the above with Playwright routing turned on | Same-page reuse still 0 / 0. The HTTP cache is off, so the last two refetch the image. | Measured (local) |
 
 What this means:
 
-- In one page session, reusing a loaded cover or a preloaded cover is free. No round trip at all.
+- In one page session, reusing a loaded cover is free. No round trip at all. This is what makes the grid-loaded case take 5 ms.
 - A CORS load and a plain load of the same URL do not share. Mixing them costs at least hop 1 again.
 - After a reload, hops 1 and 2 are always paid again, because neither redirect is cacheable (measured headers). The image itself can come from the HTTP cache. `.us` servers allow 6 hours. `.ca` servers send only `Last-Modified`, so browsers guess a lifetime, usually a tenth of the file's age. Covers last changed months or years ago get days to weeks (estimated, from how browsers treat `Last-Modified`). The storage server can differ on the next visit, and the cache is keyed by the full address, so a cached cover is missed when the server changes.
 
+### 5. How many covers the grid loads
+
+`count-grid-covers.js` opens the collection on a 390x844 phone, with fake covers answered locally (measured, local, no throttling):
+
+- 12 tiles fit on the screen.
+- Chromium's lazy loading fetches **63 covers** before any scrolling, in a collection of 300. In a collection of 60, it fetches all 60.
+- On slower connections Chromium starts lazy images from further away, so it may load more (estimated).
+
 ## Options
 
-Times saved are per pick on a phone, compared with today. Effort is for a no-build change in `js/app.js`.
+Status after iteration 2. Times are per pick on the 4G profile unless marked.
 
-| Option | Expected time saved | Effort | Tradeoffs |
-| --- | --- | --- | --- |
-| **A. Preload the next pick.** Pick one tap ahead. Load its 1200px cover with `new Image()` and start its color read. On the tap, show it. | Nearly the whole wait, about 0.4 to 2 s (estimated), on every pick after the first, if the person looks at a pick longer than the preload takes. A quicker tap still saves whatever has loaded (measured: the `<img>` joins the preload). Shown from memory with 0 requests (measured, local). | Small. About 30 lines. | One extra 1200px download per pick, about 150 to 500 KB (estimated), wasted when the person leaves. The next pick must be redone when a filter changes. Should be skipped when Save-Data is on. Randomness is unchanged. |
-| **A2. Preload a few candidates.** | Same as A at best. The pick can be decided ahead, so more candidates add nothing. | Small | 2 to 3 times A's extra data. Not recommended. |
-| **B. Show 500px first, swap in 1200px.** | When the 500px is not in memory: only the transfer difference, about 100 to 300 ms (estimated). All hops are the same for both sizes (measured for hop 1). | Small to medium | Two downloads per pick. A visible sharpening when 1200px lands. |
-| **C. Reuse the grid's 500px cover.** Show it at once when it is already loaded, then swap in 1200px. `loadedCovers` in `app.js` already records which covers loaded. | The whole wait for the first image, when the grid loaded that cover in this page session. 0 requests (measured, local). Otherwise nothing. | Small. Builds on B. | Only helps covers the grid actually loaded. The grid loads lazily, so in a large collection most covers are not loaded unless the person scrolled. Softer image at first. |
-| **D. Cache the redirect target.** Store the archive.org address per record and load from it directly. | Hop 1 on every cover in every view, including after a reload: 149 ms warm, 484 ms cold, medians from this container (measured). | Medium to high. A page cannot read a redirect's `Location` (measured: `fetch` with `redirect: 'manual'` gives an opaque result). The app would have to `fetch` the image in CORS mode and keep `response.url`, which is the final storage-server address. | Shows a stale cover if someone replaces it on the Cover Art Archive. Storage-server addresses may move (not measured). Needs a fallback to the normal URL, and storage per record. |
-| **E1. Keep the color with the record.** Save it once, reuse it on every later pick and in the edit screen. | Little for the cover, about 0 to 50 ms (estimated, one fewer parallel download). The gradient shows at once instead of after the 250px chain. | Small to medium. New record field, kept in backups. | Changes the stored data and backup format. A color does not update if the cover changes. |
-| **E2. Read the color from the shown cover.** Load the 1200px cover with `crossorigin` and sample it. | One fewer request chain. The gradient waits for the 1200px instead of the 250px, so it comes later. | Small | If any hop lacks CORS headers, the cover itself fails instead of only the color. Needs a retry without `crossorigin`. Sampling costs 13.2 ms instead of 0.9 ms here (measured). Mixing modes defeats reuse (measured). |
-| **F. Use 500px for the random pick.** | About 100 to 300 ms of transfer (estimated) and 17 ms of decode on this machine (measured). | Tiny | Soft on 3x phones: 500px for a 756 device px sleeve. The README chose 1200px for sharpness. |
-| **G. Drop `loading="lazy"` on the big cover, add `fetchpriority="high"`.** | Under 15 ms (measured). | Tiny | Not worth it alone. Could ride along with A. |
-| **H. Service worker that caches covers.** | The whole wait for any cover seen before, even after a reload (estimated). | High. New `sw.js`, cache rules, storage limits. Chrome pads each opaque response to about 7 MB of storage quota (Chrome's documented behavior, not measured). | A bigger change to how the app works. Also gives offline covers. |
+| Option | Status | Time saved | Effort | Tradeoffs |
+| --- | --- | --- | --- | --- |
+| **A. Preload the next pick.** | Declined by the user | Nearly the whole wait on later picks (estimated, iteration 1) | Small | One extra cover download per pick |
+| **B and C. Show the 500px cover first, reusing the grid's copy.** | **Built**, with the rule above | 1.2 s when the grid loaded the cover (measured). On repeat picks of other covers, the first image comes 0.13 s sooner than before (measured). Nothing on first picks of other covers. | Small | A visible sharpening when 1200px lands. About 58 KB more on repeat picks of covers the grid has not loaded. |
+| **D. Skip the redirects.** Store an archive.org address per record. | Open | Hop 1, about one round trip, on every cover in every view, including after a reload: median 145 ms on an open connection from this container (measured). Hop 2 could only be skipped by storing a storage-server address, which changes between requests (measured). | Medium to high. A page cannot read a redirect's `Location` (measured). | Stale covers if one is replaced on the Cover Art Archive. Needs a fallback. |
+| **E1. Keep the color with the record.** | **Built** | The background shows in 6 ms instead of about 0.9 s on repeat visits (measured). It also lets repeat picks ask for both sizes. | Small | One more record field, carried in backups |
+| **E2. Read the color from the 500px layer instead of a 250px download.** | Open | Would let first picks ask for both sizes without a third download. Based on the color-saved runs, the first image would come about 0.1 to 0.3 s sooner on first picks only (estimated). | Medium. The 500px layer would need `crossorigin`, which cannot reuse the grid's plain copy (measured), so the two cases need different handling. | If a hop lacked CORS headers, the 500px layer would fail too. All hops send them today (measured). |
+| **F. Use 500px only.** | Declined by the user | | | Soft on 3x phones |
+| **G. Drop `loading="lazy"` on the big cover.** | Not worth it | Under 15 ms (measured) | Tiny | |
+| **H. Service worker that caches covers.** | Open | The whole wait, about 1.2 s, for any cover seen before on that device, even after a reload or in a large collection (estimated). | High. A new `sw.js`, cache rules and storage limits. Chrome pads each opaque response to about 7 MB of quota (Chrome's documented behavior, not measured), so it would need CORS requests. | A bigger change to how the app works. Also gives offline covers. |
 
 ## Recommendation
 
-Do **A** and **C** together, then **E1**.
+Keep what iteration 2 built. It makes the common case on a small or browsed collection instant, keeps first picks no slower, and makes the background instant on repeat visits.
 
-1. **A: preload the next pick.** This is the largest saving for the least work. It removes the whole wait, estimated at 0.4 to 2 s, from every pick after the first. The browser behavior it relies on is measured: a preloaded cover shows with 0 requests, and a tap during the preload joins it instead of starting again.
-2. **C: show the grid's 500px cover at once when it is loaded.** This covers the first pick, and taps that come before the preload finishes. The app already tracks loaded covers in `loadedCovers`, so this is a small change.
-3. **E1: keep the color with the record.** The gradient then shows at once too, and one request chain per pick goes away.
-
-Start the first preload when the Random page opens. Do not start it at app start: most visits never open the Random page, and the end-to-end test expects no 250px requests on the Collection page.
-
-Leave **D** and **H** for later. They help every view and survive a reload, but cost more and risk stale covers. Whether they are worth it depends on archive.org's cache headers and hop times, which are not measured yet.
+The remaining slow case is a cover the grid has not loaded in this session: about 1.2 s on 4G, mostly the storage server's new connection and transfer. Only a cache that survives reloads, option H, can remove that wait. Option D removes one round trip at most. Option E2 helps first picks by about 0.1 to 0.3 s at most (estimated). If the user wants to go further, H is the option worth a prototype. Otherwise this is a good place to stop.
 
 ## Decisions for you
 
-1. **Allow archive.org for this environment?** Hops 2 and 3, real image sizes and archive.org's cache headers could not be measured, because the network policy blocks `archive.org`. To measure them, add `archive.org` and `*.archive.org` under Network access, Allowed domains, in the cloud environment settings. Recommended: yes. Without it, iteration 2 can build the prototype but cannot measure its real gain.
-2. **Is one extra cover download per pick acceptable?** Preloading costs about 150 to 500 KB per pick (estimated), wasted when you leave the page. Recommended: yes, but skip preloading when the phone's Save-Data setting is on.
-3. **Is a visible sharpening acceptable?** Option C shows the 500px cover first, then the 1200px one. Recommended: yes, with the existing 0.25 s fade.
-4. **Keep 1200px for the random pick?** 500px alone (option F) is faster but soft on 3x phones. Recommended: keep 1200px.
-5. **Keep the cover color in each record (E1)?** This adds a field to records and backups. Recommended: yes, in a later iteration.
+The decisions from iteration 1 are answered and done. These are new.
 
-## Next iterations
+1. **The rule for covers the grid has not loaded.** You asked me to decide this from measurements. I chose: 1200px alone on a record's first pick, 500px and 1200px together once its color is saved. The alternative of always asking for both shows a soft cover about 0.17 s sooner on first picks, but delays the sharp one by about 0.6 s and downloads about 90 KB more. Recommended: keep my rule.
+2. **Go further with a service worker (H)?** It is the only option that can make covers the grid has not loaded show at once. It adds offline cover caching and a new file, and needs a prototype to measure. Recommended: only if large collections are a real use. Otherwise stop here.
+3. **When `claude/account-sync` merges, should saving a cover color count as a change for sync?** `setCoverColor` does not go through `cleanRecord`, so it will not touch `updatedAt`. Recommended: leave it that way. The color is derived from the cover, and any device can read it again.
 
-- **Iteration 2: prototype A and C.** Build them on this branch with an end-to-end test that checks the preload request goes out before the tap. Measure the time from tap to visible cover, before and after, in Chromium with a throttled network ("Fast 4G" and "Slow 4G"). If archive.org is allowed by then, also measure hops 2 and 3, the bytes of 250, 500 and 1200px for about 5 covers, and archive.org's cache headers.
-- **Iteration 3: E1.** Keep the color with the record, include it in backups, and fall back to the read when it is missing.
-- **Iteration 4: decide on D or H** using the iteration 2 numbers. Do it only if hop 1 or the archive.org hops are still a large share of the first pick.
+## Next step
+
+If the answer to question 2 is yes: prototype a service worker on a branch that caches covers by their Cover Art Archive address in CORS mode, then measure tap-to-cover for a cover seen on an earlier visit, on the same 4G profile. If no: this branch is ready for review as it stands.
 
 ## Rerunning
 
-From the repository root. Playwright must be installed. Both scripts keep their requests few and sequential.
+From the repository root. Playwright must be installed. The scripts keep their requests few and one at a time.
 
 ```sh
 # Hop 1 timings with curl, cold and kept-alive
 bash docs/investigations/random-cover-speed/measure-redirect.sh \
   b1392450-e666-3926-a536-22c65f834433 e75c0549-ad55-39e3-8025-c72c5d4a3c5d
 
-# The real app in Chromium at phone size: request timing per pick, plus decode and color times
-node docs/investigations/random-cover-speed/measure-random-pick.js
-# Where archive.org is reachable, let the whole chain through:
-ALLOW_ARCHIVE=1 node docs/investigations/random-cover-speed/measure-random-pick.js
+# The whole chain, hop by hop, with sizes and cache headers. PASSES=1 or PASSES=2 runs one pass.
+bash docs/investigations/random-cover-speed/measure-archive.sh \
+  b1392450-e666-3926-a536-22c65f834433 e75c0549-ad55-39e3-8025-c72c5d4a3c5d
 
-# Chromium's reuse rules against a local server, no outside network
+# Tap to visible cover on 4G, before (bf604df) against this checkout, 5 covers by default.
+# SET=strategy compares asking for both sizes (35f7d26) against this checkout instead.
+node docs/investigations/random-cover-speed/measure-tap-to-cover.js
+
+# Request timing per pick in the real app, plus decode and color times (iteration 1).
+# Aborts archive.org unless ALLOW_ARCHIVE=1.
+node docs/investigations/random-cover-speed/measure-random-pick.js
+
+# Chromium's reuse rules against a local server, no outside network. ROUTED=1 turns on Playwright routing.
 node docs/investigations/random-cover-speed/check-browser-reuse.js
+
+# How many covers the grid loads before scrolling, no outside network
+node docs/investigations/random-cover-speed/count-grid-covers.js 300
 ```
 
-`measure-random-pick.js` uses `HTTPS_PROXY` when it is set. The release groups are OK Computer, Kid A, The Best Of and I Might Be Wrong by Radiohead.
+The browser scripts use `HTTPS_PROXY` when it is set. The release groups are OK Computer, Kid A, The Best Of, I Might Be Wrong and In Rainbows: From the Basement by Radiohead.
