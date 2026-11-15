@@ -240,7 +240,7 @@
   </dialog>
 
   <dialog id="scan-dialog" aria-labelledby="scan-heading">
-    <form method="dialog" class="edit-form">
+    <div class="edit-form">
       <h2 id="scan-heading" tabindex="-1" autofocus>Scan a barcode</h2>
       <p class="muted small">Point the camera at the barcode on the sleeve.</p>
       <div class="scan-view">
@@ -249,9 +249,9 @@
       </div>
       <p class="status" id="scan-hint" role="status" hidden></p>
       <div class="dialog-actions">
-        <button value="cancel">Cancel</button>
+        <button type="button" id="scan-cancel">Cancel</button>
       </div>
-    </form>
+    </div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

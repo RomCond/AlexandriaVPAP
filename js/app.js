@@ -670,19 +670,22 @@
     $('#scan-dialog').showModal();
     try {
       const barcode = await scanner.read($('#scan-video'), controller.signal);
-      $('#scan-dialog').close();
+      stopScan();
       $('#search-form').elements.q.value = barcode;
       runSearch(barcode);
     } catch (e) {
       if (controller.signal.aborted) return;
-      $('#scan-dialog').close();
+      stopScan();
       setStatus('#search-status', CAMERA_ERRORS[e.name] || CAMERA_FAILED, 'error');
     }
   }
 
-  function onScanClosed() {
+  // Aborts as the person taps Cancel, not on the dialog's close event, which comes a moment later.
+  // A barcode read in between would otherwise be searched for.
+  function stopScan() {
     clearTimeout(scanHintTimer);
     scanController.abort();
+    $('#scan-dialog').close();
   }
 
   function onManualSubmit(event) {
@@ -1309,7 +1312,8 @@
   $('#search-form').elements.q.addEventListener('input', onSearchInput);
   scanner.supported().then((yes) => { $('#scan-btn').hidden = !yes; });
   $('#scan-btn').addEventListener('click', scan);
-  $('#scan-dialog').addEventListener('close', onScanClosed);
+  $('#scan-cancel').addEventListener('click', stopScan);
+  $('#scan-dialog').addEventListener('cancel', stopScan); // Escape, or the back gesture on Android
   $('#scan-video').addEventListener('playing', () => {
     clearTimeout(scanHintTimer);
     scanHintTimer = setTimeout(() => setStatus('#scan-hint', SCAN_HINT), SCAN_HINT_MS);

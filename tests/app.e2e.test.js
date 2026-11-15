@@ -638,8 +638,9 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
 
 // Chromium on Linux has no BarcodeDetector and the test has no camera, so this stands in for both.
 // The sleeve shows a QR code and a barcode. Like the real detector, the fake reports only the formats
-// it was asked for. With barcode null it never reads anything.
-function fakeCamera({ formats = ['qr_code', 'ean_13', 'upc_a'], cameraError = null, barcode = '0724352775324' } = {}) {
+// it was asked for. With barcode null it never reads anything. With holdRead, its first read waits
+// until the test calls releaseRead().
+function fakeCamera({ formats = ['qr_code', 'ean_13', 'upc_a'], cameraError = null, barcode = '0724352775324', holdRead = false } = {}) {
   return (context) => context.addInitScript((fake) => {
     window.cameraStreams = [];
     window.BarcodeDetector = class {
@@ -652,9 +653,14 @@ function fakeCamera({ formats = ['qr_code', 'ean_13', 'upc_a'], cameraError = nu
 
       async detect(video) {
         this.frames += 1;
-        if (!fake.barcode || this.frames < 4 || video.readyState < 2) return [];
         const sleeve = [{ format: 'qr_code', rawValue: 'https://example.com/promo' }, { format: 'ean_13', rawValue: fake.barcode }];
-        return sleeve.filter((code) => this.formats.includes(code.format));
+        const seen = () => sleeve.filter((code) => this.formats.includes(code.format));
+        if (fake.holdRead) {
+          window.readHeld = true;
+          return new Promise((resolve) => { window.releaseRead = () => resolve(seen()); });
+        }
+        if (!fake.barcode || this.frames < 4 || video.readyState < 2) return [];
+        return seen();
       }
     };
     navigator.mediaDevices.getUserMedia = async () => {
@@ -665,7 +671,7 @@ function fakeCamera({ formats = ['qr_code', 'ean_13', 'upc_a'], cameraError = nu
       window.cameraStreams.push(stream);
       return stream;
     };
-  }, { formats, cameraError, barcode });
+  }, { formats, cameraError, barcode, holdRead });
 }
 
 const cameraOff = (page) => page.evaluate(() => window.cameraStreams.every((stream) => stream.getTracks().every((track) => track.readyState === 'ended')));
@@ -728,11 +734,32 @@ test('explains a blocked camera, and helps when nothing is read', { skip: !chrom
     await page.clock.runFor(9000);
     await page.locator('#scan-hint', { hasText: 'Nothing read yet.' }).waitFor();
     await shot(page, 'scan-02-nothing-read');
-    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.keyboard.press('Escape');
     assert.ok(await page.locator('#scan-dialog').isHidden());
     await page.clock.runFor(500);
-    assert.ok(await cameraOff(page), 'the camera is off after Cancel');
+    assert.ok(await cameraOff(page), 'the camera is off after Escape');
     assert.equal(mbCalls.length, 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Cancel wins over a barcode read at the same moment', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 375, height: 760 } }, fakeCamera({ holdRead: true }));
+    await openTab(page, 'add');
+    await page.click('#scan-btn');
+    await page.waitForFunction(() => window.readHeld);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(() => window.releaseRead());
+    await page.waitForFunction(() => window.cameraStreams.every((stream) => stream.getTracks().every((track) => track.readyState === 'ended')));
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#search-form [name=q]').inputValue(), '', 'a cancelled scan fills nothing in');
+    assert.equal(mbCalls.length, 0, 'a cancelled scan searches nothing');
+    assert.ok(await page.locator('#search-status').isHidden(), 'a cancelled scan shows no message');
     assert.deepEqual(errors, []);
     await context.close();
   } finally {
