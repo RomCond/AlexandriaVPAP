@@ -616,10 +616,17 @@
     }
 
     const withCurrentFormat = (record) => (RENAMED_FORMATS[record.format] ? { ...record, format: currentFormat(record.format) } : record);
-    let records = loadList(KEYS.records).map(withCurrentFormat);
-    let wishes = loadList(KEYS.wishlist).map(withCurrentFormat);
-    let confirmed = loadConfirmed(); // vinyl key → when you confirmed it
-    let deleted = markersFrom(read(KEYS.deleted, null));
+    let records;
+    let wishes;
+    let confirmed; // vinyl key → when you confirmed it
+    let deleted;
+    function load() {
+      records = loadList(KEYS.records).map(withCurrentFormat);
+      wishes = loadList(KEYS.wishlist).map(withCurrentFormat);
+      confirmed = loadConfirmed();
+      deleted = markersFrom(read(KEYS.deleted, null));
+    }
+    load();
     for (const key of OLD_KEYS) {
       try {
         backend.removeItem(key);
@@ -635,13 +642,15 @@
       };
     }
 
+    const notify = () => listeners.forEach((listener) => listener());
+
     function commit() {
       const state = syncState();
       write(KEYS.records, state.records);
       write(KEYS.wishlist, state.wishlist);
       write(KEYS.confirmed, state.confirmed);
       write(KEYS.deleted, state.deleted);
-      listeners.forEach((listener) => listener());
+      notify();
     }
 
     // Getting a record ticks it off the wishlist.
@@ -882,6 +891,14 @@
         confirmed = timesFrom(merged.confirmed);
         deleted = markersFrom(merged.deleted);
         commit();
+      },
+
+      // Reads everything that syncs again after another tab saved it. Each tab keeps its own copy in
+      // memory and saves all of it, so without this a tab saves over what the other tab just added.
+      reload() {
+        const before = JSON.stringify(syncState());
+        load();
+        if (JSON.stringify(syncState()) !== before) notify();
       },
 
       getDiscography(artistId) {

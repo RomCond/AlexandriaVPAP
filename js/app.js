@@ -1298,6 +1298,7 @@
     if (!lookup.running && !lookup.error && store.all().some((record) => record.pendingLookup)) runLookups();
   });
 
+  window.addEventListener('storage', () => store.reload());
   window.addEventListener('hashchange', showView);
   renderCollection();
   showView();

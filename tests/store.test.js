@@ -452,6 +452,24 @@ test('applySyncState leaves out what it cannot read from the other device', () =
   assert.deepEqual(store.syncState().confirmed, { 'rg-b': at(1) });
 });
 
+test('two tabs open at once keep both their changes', () => {
+  const shared = S.memoryStorage();
+  const first = S.createStore(shared);
+  const second = S.createStore(shared);
+  let shown = 0;
+  second.onChange(() => shown++);
+
+  first.setPref('sort', 'year');
+  second.reload();
+  assert.equal(shown, 0, 'a preference saved in the other tab changes nothing that syncs');
+
+  first.add({ artist: 'Steely Dan', title: 'Aja' });
+  second.reload();
+  assert.equal(shown, 1, 'the other tab shows the new record');
+  second.add({ artist: 'Radiohead', title: 'OK Computer' });
+  assert.deepEqual(titles(S.createStore(shared).all()), ['Aja', 'OK Computer']);
+});
+
 test('unreadable saved data is set aside instead of overwritten', () => {
   const storage = S.memoryStorage();
   storage.setItem(S.KEYS.records, '{oops');

@@ -635,6 +635,38 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
   }
 });
 
+test('two tabs open at once keep both their changes', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page: first, errors } = await openApp(browser);
+    const second = await context.newPage();
+    second.on('pageerror', (err) => errors.push(err.message));
+    await second.goto(PAGE_URL);
+    const addByHand = async (page, artist, title) => {
+      await openTab(page, 'add');
+      await page.click('#manual-add summary');
+      const manual = page.locator('#manual-form');
+      await manual.locator('[name=artist]').fill(artist);
+      await manual.locator('[name=title]').fill(title);
+      await manual.locator('button[type=submit]').click();
+    };
+
+    await addByHand(first, 'Steely Dan', 'Aja');
+    await second.locator('#nav-count', { hasText: '1' }).waitFor({ timeout: 5000 });
+    await addByHand(second, 'Radiohead', 'OK Computer');
+    await first.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    await first.reload();
+    assert.equal(await text(first, '#nav-count'), '2');
+    const saved = await first.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(saved, ['Aja', 'OK Computer']);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
 test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
