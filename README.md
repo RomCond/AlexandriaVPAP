@@ -49,14 +49,14 @@ The panel above the collection lists the records the app couldn't match. They ha
 
 ## How the missing list works
 
-1. The app fetches every album, EP and single credited to the artist on MusicBrainz.
-2. It checks which of those have at least one vinyl pressing: an LP or 12" record, or a 45 or 10" record when you've turned those on. Flexi-discs, VinylDisc hybrids and bootlegs don't count. MusicBrainz search returns at most 500 results per query, so for artists with more vinyl pressings than that, the app searches a range of years at a time. At one request a second, big catalogs take longer to load, about 20 seconds for David Bowie and 50 for the Beatles.
+1. The app finds the artist's studio albums on MusicBrainz with one search and lists them straight away.
+2. Then it reads the artist's official and promotional albums, EPs and singles, 100 at a time, and fills in the list as they arrive. It checks which ones have at least one vinyl pressing: an LP or 12" record, or a 45 or 10" record when you've turned those on. Flexi-discs, VinylDisc hybrids, bootlegs and pressings with no status on MusicBrainz don't count. At one request a second, big catalogs take longer to check, about 20 seconds for David Bowie and 28 for the Beatles. Until the check ends, no album says "Vinyl not confirmed".
 3. Deluxe and expanded editions get their own line right after the original, since they add songs. MusicBrainz usually files them under the original album, so the app finds them by releases whose title or note says "deluxe" or "expanded". All of an album's deluxe releases share one line. Owning the original doesn't count as owning the deluxe edition, and owning the deluxe edition doesn't count as owning the original.
 4. A record you added through search or barcode matches by its MusicBrainz release group id.
 5. A record you typed in by hand matches by title, ignoring case, accents, punctuation and notes like "(2009 Remaster)". If its title says "Deluxe" or "Expanded", it goes on the deluxe line.
 6. Records by that artist that match nothing appear under "Yours, but not matched", so you can fix the title.
 
-**Vinyl only** is on by default, so the missing list shows only releases that came out on vinyl, one line per album however many pressings exist. Studio albums are the exception. MusicBrainz often lacks the vinyl pressings of albums that have them, so studio albums show anyway, marked "Vinyl not confirmed". Singles, EPs, live albums, compilations and deluxe editions still need a vinyl pressing in MusicBrainz.
+**Vinyl only** is on by default, so the missing list shows only releases that came out on vinyl, one line per album however many pressings exist. Studio albums are the exception. MusicBrainz often lacks the vinyl pressings of albums that have them, so studio albums show anyway, marked "Vinyl not confirmed". Singles, EPs, live albums, compilations and deluxe editions still need a vinyl pressing in MusicBrainz. Albums, EPs and singles with no official release at all, mostly bootlegs, only show with Vinyl only off. The app loads them the first time you turn it off.
 
 If you know a release came out on vinyl, tap **Confirm** under "Vinyl not confirmed" in the discography or in search results. The app then counts it as vinyl. **Undo** takes the confirmation back. Owning a record in a vinyl format also confirms it. The app saves confirmations on the device and includes them in backups. Records you already own always show. Turn **Vinyl only** off to see everything.
 

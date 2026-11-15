@@ -203,9 +203,10 @@ test('discography cache expires after a week', (t) => {
 
 test('discographies cached under older rules are cleared', () => {
   const storage = S.memoryStorage();
-  for (const v of [1, 2, 3]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
+  for (const v of [1, 2, 3, 4, 5]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
   S.createStore(storage);
-  for (const v of [1, 2, 3]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
+  for (const v of [1, 2, 3, 4, 5]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
+  assert.equal(S.KEYS.discographies, 'recordcatalog.discographies.v6');
 });
 
 test('categoryOf sorts release groups into filter buckets', () => {
