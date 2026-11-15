@@ -499,13 +499,22 @@
   const OLD_EXCEL = [0xd0, 0xcf, 0x11, 0xe0];
   const startsWith = (bytes, signature) => signature.every((byte, i) => bytes[i] === byte);
 
+  const namesColumns = (rows) => {
+    const head = rows.find((cells) => cells.some((cell) => cell.trim()));
+    return Boolean(head && readHeader(head));
+  };
+
   /*
-   * What a chosen file holds, from its bytes: an .xlsx file's first sheet as rows of cells, or else its
-   * text. Both go to readImport. Excel saves "Unicode Text" as UTF-16 and, on Windows, CSV as
-   * Windows-1252, so a file that isn't valid UTF-8 is read as Windows-1252.
+   * What a chosen file holds, from its bytes: rows of cells from an .xlsx file's first sheet whose first
+   * row names the columns (or its first sheet, when none does), or else the file's text. Both go to
+   * readImport. Excel saves "Unicode Text" as UTF-16 and, on Windows, CSV as Windows-1252, so a file
+   * that isn't valid UTF-8 is read as Windows-1252.
    */
   async function fileContent(bytes) {
-    if (startsWith(bytes, ZIP)) return xlsx.sheetRows(bytes);
+    if (startsWith(bytes, ZIP)) {
+      const sheets = await xlsx.workbookSheets(bytes);
+      return sheets.find(namesColumns) || sheets[0];
+    }
     if (startsWith(bytes, OLD_EXCEL)) throw new Error(xlsx.NOT_EXCEL);
     if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
     try {

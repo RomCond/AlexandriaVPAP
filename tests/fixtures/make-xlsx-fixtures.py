@@ -54,6 +54,24 @@ def xlsxwriter_gaps_file():
     book.close()
 
 
+def xlsxwriter_sheet_choice_files():
+    # A summary sheet first, before the sheet whose first row names the columns.
+    book = xlsxwriter.Workbook(os.path.join(HERE, 'records-summary-first.xlsx'))
+    summary = book.add_worksheet('Summary')
+    summary.write_row(0, 0, ['My records', 'Count'])
+    summary.write_row(1, 0, ['Vinyl', 2])
+    vinyl = book.add_worksheet('Vinyl')
+    vinyl.write_row(0, 0, ['Artist', 'Album', 'Year'])
+    vinyl.write_row(1, 0, ['Steely Dan', 'Aja', 1977])
+    vinyl.write_row(2, 0, ['Rush', 'Signals', 1982])
+    book.close()
+    # No sheet names its columns, so the first sheet is read, like two columns pasted in.
+    book = xlsxwriter.Workbook(os.path.join(HERE, 'records-no-column-names.xlsx'))
+    book.add_worksheet('First').write_row(0, 0, ['Steely Dan', 'Gaucho'])
+    book.add_worksheet('Second').write_row(0, 0, ['Rush', '2112'])
+    book.close()
+
+
 def openpyxl_1904_file():
     book = openpyxl.Workbook()
     book.epoch = openpyxl.utils.datetime.CALENDAR_MAC_1904
@@ -85,6 +103,7 @@ def numbers_like_file():
 
 xlsxwriter_file()
 xlsxwriter_gaps_file()
+xlsxwriter_sheet_choice_files()
 openpyxl_1904_file()
 libreoffice_file()
 numbers_like_file()

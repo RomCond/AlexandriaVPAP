@@ -212,6 +212,15 @@ test('fileContent gives every cell of an .xlsx row as text, and reads a number a
     'an empty cell in the middle is an empty string, and 0 "AD" is a number format, not a date');
 });
 
+test('fileContent reads the first sheet whose first row names the columns, or else the first sheet', async () => {
+  const summaryFirst = S.readImport(await S.fileContent(fixture('records-summary-first.xlsx')));
+  assert.deepEqual([summaryFirst.kind, summaryFirst.items.map((item) => `${item.artist} - ${item.title}`)], ['table', ['Steely Dan - Aja', 'Rush - Signals']],
+    'a Summary sheet before the records is passed over');
+  const noNames = S.readImport(await S.fileContent(fixture('records-no-column-names.xlsx')));
+  assert.deepEqual([noNames.kind, noNames.items.map((item) => `${item.artist} - ${item.title}`)], ['list', ['Steely Dan - Gaucho']],
+    'with no column names anywhere, the first sheet reads like two columns pasted in');
+});
+
 test('fileContent reads .xlsx files from LibreOffice and from workbooks dated from 1904', async () => {
   const libreoffice = S.readImport(await S.fileContent(fixture('records-libreoffice.xlsx')));
   assert.deepEqual(libreoffice.items.map((item) => [item.title, item.year]), [['Dummy', 1994], ['Kid A', 2000]]);

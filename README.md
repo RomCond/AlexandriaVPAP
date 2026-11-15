@@ -37,7 +37,7 @@ MusicBrainz allows about one request per second. The search box waits for a shor
 - A spreadsheet, as an Excel .xlsx file or saved as CSV or TSV, needs column names in its first row, with one for the artist and one for the title. The app knows names such as Artist, Band or Album Artist for the artist, and Title, Album or Release for the title. It also reads a year, format or notes column, with names such as Year, Released, Format, Media, Notes or Comments. A label, catalog number or condition column goes into the notes, like "Label: Mercury". Commas, tabs and semicolons all work between columns. The import screen names the columns it read and the ones it left out.
 - Anything else is a typed list, one record per line.
 
-Excel on Windows saves CSV in its own text encoding, and the app reads that too, so names like "Motörhead" keep their accents. From an Excel file, the app reads the first sheet, and a date in the year column gives its year. It reads .xlsx files without an add-on, in browsers from 2023 on: Safari 16.4, Chrome 103 and Firefox 113. An older browser says to save the sheet as CSV. The app can't read Numbers or old Excel .xls files, so save those as .xlsx or CSV first.
+Excel on Windows saves CSV in its own text encoding, and the app reads that too, so names like "Motörhead" keep their accents. From an Excel file, the app reads the first sheet whose first row names the columns, so a summary sheet in front is passed over. A date in the year column gives its year. It reads .xlsx files without an add-on, in browsers from 2023 on: Safari 16.4, Chrome 103 and Firefox 113. An older browser says to save the sheet as CSV. The app can't read Numbers or old Excel .xls files, so save those as .xlsx or CSV first.
 
 A collection export from Discogs works as it is. The app drops the number Discogs adds to tell artists with the same name apart, so "Nirvana (2)" becomes "Nirvana", and keeps your collection notes. The label, the catalog number, the year of that pressing, and the media and sleeve condition go into the notes, like "Pressing year: 2015; Media condition: VG+". The record's year comes from MusicBrainz instead, as the year the album first came out.
 
@@ -78,7 +78,7 @@ The discography shows studio albums by default. The toggles at the top switch on
 index.html            page markup for all four views
 css/styles.css        styles, light and dark
 js/store.js           records, backups, caching, and the matching logic
-js/xlsx.js            reads the first sheet of an Excel file
+js/xlsx.js            reads the sheets of an Excel file
 js/musicbrainz.js     MusicBrainz and Cover Art Archive client
 js/app.js             the UI
 tests/                unit tests and browser tests

@@ -1,5 +1,5 @@
 /*
- * Reads the first sheet of an Excel .xlsx file as rows of cell text, with no library. An .xlsx file is a
+ * Reads the sheets of an Excel .xlsx file as rows of cell text, with no library. An .xlsx file is a
  * zip archive of XML files; the browser's DecompressionStream unzips them.
  * Loaded as a plain script in the browser (window.RC.xlsx) and with require() in Node tests.
  */
@@ -107,21 +107,7 @@
 
   // ---------- Workbook ----------
 
-  async function readSheet(entries) {
-    const workbook = await zipText(entries, 'xl/workbook.xml');
-    if (workbook === null) throw new Error(NOT_EXCEL);
-    const [first] = elements(workbook, 'sheet');
-    const id = first && attribute(first[0], 'id');
-    const relations = elements((await zipText(entries, 'xl/_rels/workbook.xml.rels')) || '', 'Relationship');
-    const relation = relations.find(([attributes]) => attribute(attributes, 'Id') === id);
-    const target = relation ? attribute(relation[0], 'Target') : 'worksheets/sheet1.xml';
-    const sheet = await zipText(entries, target.startsWith('/') ? target.slice(1) : `xl/${target}`);
-    if (sheet === null) throw new Error('no sheet');
-    const book = {
-      strings: elements((await zipText(entries, 'xl/sharedStrings.xml')) || '', 'si').map(([, inner]) => runText(inner)),
-      dateStyles: dateStyles((await zipText(entries, 'xl/styles.xml')) || ''),
-      from1904: /date1904="(?:1|true)"/.test(workbook),
-    };
+  function sheetRows(sheet, book) {
     return elements(sheet, 'row').map(([, rowXml]) => {
       const cells = [];
       for (const [attributes, inner] of elements(rowXml, 'c')) {
@@ -134,18 +120,40 @@
     });
   }
 
+  async function readSheets(entries) {
+    const workbook = await zipText(entries, 'xl/workbook.xml');
+    if (workbook === null) throw new Error(NOT_EXCEL);
+    const relations = elements((await zipText(entries, 'xl/_rels/workbook.xml.rels')) || '', 'Relationship');
+    const book = {
+      strings: elements((await zipText(entries, 'xl/sharedStrings.xml')) || '', 'si').map(([, inner]) => runText(inner)),
+      dateStyles: dateStyles((await zipText(entries, 'xl/styles.xml')) || ''),
+      from1904: /date1904="(?:1|true)"/.test(workbook),
+    };
+    const sheets = [];
+    for (const [sheetAttributes] of elements(workbook, 'sheet')) {
+      const relation = relations.find(([attributes]) => attribute(attributes, 'Id') === attribute(sheetAttributes, 'id'));
+      if (!relation) continue;
+      const target = attribute(relation[0], 'Target');
+      const sheet = await zipText(entries, target.startsWith('/') ? target.slice(1) : `xl/${target}`);
+      if (sheet !== null) sheets.push(sheetRows(sheet, book));
+    }
+    if (!sheets.length) throw new Error('no sheet');
+    return sheets;
+  }
+
   /*
-   * The first sheet of an .xlsx file as rows of cell text. A date shows as 2024-05-31. Throws a message
-   * that says what to do instead when the file isn't an .xlsx file, is damaged, or the browser can't unzip.
+   * Every sheet of an .xlsx file, in the workbook's order, as rows of cell text. A date shows as
+   * 2024-05-31. Throws a message that says what to do instead when the file isn't an .xlsx file, is
+   * damaged, or the browser can't unzip.
    */
-  async function sheetRows(bytes) {
+  async function workbookSheets(bytes) {
     if (typeof DecompressionStream === 'undefined') throw new Error(`This browser can't open Excel files. ${SAVE_AS_CSV}`);
     try {
-      return await readSheet(zipEntries(bytes));
+      return await readSheets(zipEntries(bytes));
     } catch (e) {
       throw e.message === NOT_EXCEL ? e : new Error(`That Excel file couldn't be read. ${SAVE_AS_CSV}`);
     }
   }
 
-  return { sheetRows, NOT_EXCEL };
+  return { workbookSheets, NOT_EXCEL };
 });
