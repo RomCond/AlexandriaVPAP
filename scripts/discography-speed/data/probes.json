@@ -1305,5 +1305,64 @@
    "Promotion": 8
   },
   "tracksOnPage": 575
+ },
+ "artist-portishead": {
+  "path": "artist",
+  "params": {
+   "query": "artist:\"Portishead\"",
+   "limit": 3
+  },
+  "status": 200,
+  "count": 1,
+  "returned": 1,
+  "error": null,
+  "ids": [
+   "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11"
+  ]
+ },
+ "artist-boards-of-canada": {
+  "path": "artist",
+  "params": {
+   "query": "artist:\"Boards of Canada\"",
+   "limit": 3
+  },
+  "status": 200,
+  "count": 2,
+  "returned": 2,
+  "error": null,
+  "ids": [
+   "69158f97-4c07-4c4e-baf8-4e4ab1ed666e",
+   "3ab0c8c5-89f2-420a-a2fa-262acdd6a18c"
+  ]
+ },
+ "artist-khruangbin": {
+  "path": "artist",
+  "params": {
+   "query": "artist:\"Khruangbin\"",
+   "limit": 3
+  },
+  "status": 200,
+  "count": 1,
+  "returned": 1,
+  "error": null,
+  "ids": [
+   "aea4c9b9-9f8d-49dc-b2ca-57d6f26e8634"
+  ]
+ },
+ "artist-radiohead": {
+  "path": "artist",
+  "params": {
+   "query": "artist:\"Radiohead\"",
+   "limit": 3
+  },
+  "status": 200,
+  "count": 7,
+  "returned": 3,
+  "error": null,
+  "ids": [
+   "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+   "3ecaa799-94ae-45cd-9ad1-bcabae4073e1",
+   "118b7a68-9249-4f5a-91f4-1fd046c07f8f"
+  ]
  }
 }

@@ -1,8 +1,9 @@
 // Offline. Counts the requests each loading strategy needs for each measured artist, and checks
 // what each one gets right, using the releases the live runs recorded in data/.
 //   node scripts/discography-speed/simulate.mjs
-// No network. The app's own getDiscography runs against a fake MusicBrainz built from the
-// complete release lists, so its request count comes from the real code.
+// No network. The app's getDiscography from before the change (old-musicbrainz.js) runs against a
+// fake MusicBrainz built from the complete release lists, so its request count comes from real code.
+// Live runs of the new loader (data/<slug>-new.json.gz) are checked against the same lists.
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -11,7 +12,8 @@ import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const mb = require('../../js/musicbrainz.js');
+// The loader as it was before the change: the baseline every option is compared with.
+const mb = require('./old-musicbrainz.js');
 const S = require('../../js/store.js');
 
 const GAP_S = 1.1;
@@ -330,4 +332,30 @@ for (const artist of ARTISTS) {
   for (const [name, requests, first] of strategies) {
     console.log(row([name, requests ?? 'n/a', requests ? seconds(requests) : 'n/a', first ? `${first} (${seconds(first)})` : 'end']));
   }
+
+  // The new loader, run live, against the complete lists.
+  const after = load(`${artist.slug}-new.json`);
+  if (after) {
+    const ok = after.requests.filter((r) => r.status === 200);
+    const first = after.progress.find((p) => p.shows);
+    const counted = vinyl.filter((r) => !['Bootleg', 'Pseudo-Release'].includes(r.status));
+    const onVinyl = new Set(after.browseReleases.filter((r) => r.formats.some((f) => VINYL_TERMS.includes(squash(f)))).map((r) => r.id));
+    const found = counted.filter((r) => onVinyl.has(r.id));
+    const missed = {};
+    for (const r of counted) if (!onVinyl.has(r.id)) missed[r.status] = (missed[r.status] || 0) + 1;
+    console.log(`new loader, live: ${ok.length} requests (${after.requests.length - ok.length} 503s left out), first list after ${first ? first.requests : ok.length}`);
+    console.log(`new loader found ${found.length} of ${counted.length} vinyl pressings that count, missed by status ${JSON.stringify(missed)}`);
+    console.log(`new loader vs complete search: ${JSON.stringify(compare(truth, after.result))}`);
+  }
+}
+
+// Small and mid-sized artists: the old and new loaders, each run live once.
+for (const slug of ['portishead', 'boards-of-canada', 'khruangbin', 'radiohead']) {
+  const before = load(`${slug}-old.json`);
+  const after = load(`${slug}-new.json`);
+  if (!before || !after) continue;
+  const ok = (run) => run.requests.filter((r) => r.status === 200).length;
+  const first = after.progress.find((p) => p.shows);
+  const vinylGroups = (run) => run.result.groups.filter((g) => g.vinyl).length;
+  console.log(`\n${slug}: old ${ok(before)} requests, new ${ok(after)} (first list after ${first ? first.requests : ok(after)}); groups with an LP: old ${vinylGroups(before)}, new ${vinylGroups(after)}`);
 }
