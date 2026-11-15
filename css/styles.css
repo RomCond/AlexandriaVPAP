@@ -800,7 +800,7 @@ button.wished {
   gap: 8px;
 }
 
-/* ---------- Importing a list ---------- */
+/* ---------- Importing ---------- */
 
 .lookup {
   margin-bottom: 16px;
@@ -839,9 +839,9 @@ button.wished {
   background: var(--surface);
 }
 
-.list-help { margin: 8px 0 14px; }
+.import-help { margin: 8px 0 14px; }
 
-.list-options {
+.import-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -850,13 +850,13 @@ button.wished {
   margin-top: 12px;
 }
 
-.list-options .add-as { margin-top: 0; }
+.import-options .add-as { margin-top: 0; }
 
-.list-summary:not(:empty) { margin-top: 14px; }
-.list-summary p { margin: 0 0 6px; }
-.list-count { font-weight: 600; }
+.import-summary:not(:empty) { margin-top: 14px; }
+.import-summary p { margin: 0 0 6px; }
+.import-count { font-weight: 600; }
 
-.list-problem {
+.import-problem {
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
@@ -865,13 +865,13 @@ button.wished {
   font-size: 0.925rem;
 }
 
-.list-problem ul {
+.import-problem ul {
   margin: 6px 0 0;
   padding-left: 18px;
   overflow-wrap: anywhere;
 }
 
-.list-problem p:last-child { margin: 4px 0 0; }
+.import-problem p:last-child { margin: 4px 0 0; }
 
 .empty h2 { margin-bottom: 6px; font-size: 1.4rem; }
 .empty p { margin: 0 0 18px; }
@@ -1170,6 +1170,11 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
   align-items: center;
   gap: 8px;
   margin-top: 18px;
+}
+
+.dialog-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .spacer { flex: 1; }

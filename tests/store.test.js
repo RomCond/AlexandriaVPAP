@@ -311,8 +311,8 @@ test('pickRandom avoids recent picks until it runs out of others', () => {
   assert.equal(S.pickRandom([], []), null);
 });
 
-test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeats', () => {
-  const { items, unreadable, merged } = S.parseRecordList([
+test('readImport reads "Artist - Title" lines, keeps notes and folds repeats', () => {
+  const { kind, items, unreadable, merged } = S.readImport([
     'Steely Dan - Aja',
     '  2. Rush – Moving Pictures (Signed)',
     'Bleachers - everyone for ten minutes',
@@ -325,7 +325,7 @@ test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeat
     '',
     'Just a title',
   ].join('\r\n'));
-  assert.deepEqual(unreadable, ['Just a title']);
+  assert.deepEqual([kind, unreadable], ['list', ['Just a title']]);
   assert.equal(merged, 2);
   const byTitle = Object.fromEntries(items.map((item) => [item.title, item]));
   assert.equal(items.length, 7);

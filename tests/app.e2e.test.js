@@ -540,7 +540,13 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     assert.ok(await page.locator('#collection-empty').isVisible());
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'the empty shelf shows one Import button');
+    await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
+    await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');
+    assert.equal(await text(page, '#import-submit'), 'Import backup');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
@@ -566,9 +572,9 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
     const byTitle = async () => Object.fromEntries((await records()).map((r) => [r.title, r]));
 
-    await page.click('#list-import-tools');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'list-heading', 'the list box waits for a tap');
-    await page.fill('#list-form [name=list]', [
+    await page.click('#import-btn');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'import-heading', 'the list box waits for a tap');
+    await page.fill('#import-form [name=text]', [
       'Radiohead - The Bends',
       'Portishead - Dumy (Signed)',
       'Radiohed - Kid A',
@@ -577,14 +583,14 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
       'Weezer - Weezer',
       'a line with no dash',
     ].join('\n'));
-    const summary = await text(page, '#list-summary');
+    const summary = await text(page, '#import-summary');
     assert.match(summary, /4 records to add/);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 line named an album already on the list/);
     assert.match(summary, /1 line couldn't be read[\s\S]*a line with no dash/);
-    assert.equal(await text(page, '#list-submit'), 'Add 4 records');
+    assert.equal(await text(page, '#import-submit'), 'Add 4 records');
     await shot(page, 'import-01-dialog');
-    await page.click('#list-submit');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 4 records' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '5');
 
@@ -619,15 +625,71 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     assert.ok(await page.locator('#lookup').isHidden());
 
     // Undo takes the whole import back
-    await page.click('#list-import-tools');
-    await page.fill('#list-form [name=list]', 'Portishead - Third\nPortishead - Portishead');
-    await page.click('#list-submit');
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 2 records' }).waitFor();
     await page.click('#toast .toast-action');
     assert.equal(await text(page, '#nav-count'), '5');
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('imports a spreadsheet saved as CSV, and says what to do with an Excel file', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+        id: 'dummy', artist: 'Portishead', artistId: 'a-portishead', title: 'Dummy', year: 1994, releaseGroupId: 'rg-dummy',
+        format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
+      }]));
+    });
+    await page.reload();
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
+    await page.click('#import-btn');
+    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]);
+    await page.setInputFiles('#import-file', { name: 'records.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: zip });
+    await page.locator('#import-summary', { hasText: "can't read Excel or Numbers files yet" }).waitFor();
+    assert.ok(await page.locator('#import-submit').isDisabled());
+
+    // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
+    const csv = [
+      'Artist,Album,Year,Format,Label',
+      'Portishead,Dummy,1994,LP,Go! Beat',
+      '"Crosby, Stills & Nash",Crosby Stills & Nash,1969,LP,Atlantic',
+      'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
+      'Björk,Homogenic,1997-09-22,,One Little Indian',
+      ',Didn’t Say,1999,LP,',
+    ].join('\r\n');
+    const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
+    await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
+    await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
+    const summary = await text(page, '#import-summary');
+    assert.match(summary, /Read the Artist, Album, Year and Format columns and left out the Label column\./);
+    assert.match(summary, /1 record already in your collection is skipped/);
+    assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
+    assert.ok(await page.locator('#import-format-field').isVisible());
+    await page.selectOption('#import-format', 'Double LP');
+    await shot(page, 'import-04-spreadsheet');
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 3 records' }).waitFor();
+    assert.equal(await text(page, '#nav-count'), '4');
+
+    const added = Object.fromEntries((await records()).map((r) => [r.title, [r.artist, r.year, r.format, r.notes]]));
+    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', '']);
+    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed'], 'the umlaut survives and 7" is a 45');
+    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', ''], 'no format in the file, so Add as decides');
+    await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
+
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

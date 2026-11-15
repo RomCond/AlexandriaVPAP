@@ -876,7 +876,6 @@
     categoryOf,
     compareDiscography,
     pickRandom,
-    parseRecordList,
     fileText,
     readImport,
     similarity,
