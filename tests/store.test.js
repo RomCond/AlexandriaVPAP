@@ -216,6 +216,72 @@ test('backups keep the time each record last changed', (t) => {
   assert.equal(byTitle['Tago Mago'], '2020-05-05T00:00:00.000Z', 'an older backup counts from when the record was added');
 });
 
+test('deleting leaves a marker with the time, and adding it back clears the marker', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const aja = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  const gaucho = store.add({ artist: 'Steely Dan', title: 'Gaucho' });
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Tago Mago' });
+  const gotIt = store.addToWishlist({ artist: 'Can', title: 'Ege Bamyasi' });
+  store.confirmVinyl('rg-x');
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  const at = '2026-02-01T00:00:00.000Z';
+  store.remove(aja.id);
+  store.removeMany([gaucho.id]);
+  store.removeFromWishlist(wish.id);
+  store.add({ ...gotIt, id: null, addedAt: null });
+  store.unconfirmVinyl('rg-x');
+  assert.deepEqual(S.createStore(storage).syncState().deleted, {
+    records: { [aja.id]: at, [gaucho.id]: at },
+    wishlist: { [wish.id]: at, [gotIt.id]: at },
+    confirmed: { 'rg-x': at },
+  });
+
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  store.add(aja);
+  store.addToWishlist(wish);
+  store.confirmVinyl('rg-x');
+  const state = S.createStore(storage).syncState();
+  assert.deepEqual(state.deleted, { records: { [gaucho.id]: at }, wishlist: { [gotIt.id]: at }, confirmed: {} });
+  assert.equal(state.confirmed['rg-x'], '2026-03-01T00:00:00.000Z');
+});
+
+test('confirmations saved before they had times are kept, with an unknown time', () => {
+  const storage = S.memoryStorage();
+  storage.setItem('recordcatalog.confirmed.v1', JSON.stringify(['rg-a', 'rg-b:deluxe']));
+  const store = S.createStore(storage);
+  assert.equal(store.confirmedByYou('rg-a'), true);
+  assert.deepEqual(store.syncState().confirmed, { 'rg-a': '1970-01-01T00:00:00.000Z', 'rg-b:deluxe': '1970-01-01T00:00:00.000Z' });
+  assert.equal(S.createStore(storage).confirmedByYou('rg-b:deluxe'), true, 'still there the next time the app opens');
+});
+
+test('importing a backup brings back what you deleted, as a change made now', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const store = S.createStore(S.memoryStorage());
+  const aja = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Tago Mago' });
+  store.confirmVinyl('rg-x');
+  const backup = store.exportJSON();
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  store.remove(aja.id);
+  store.removeFromWishlist(wish.id);
+  store.unconfirmVinyl('rg-x');
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  store.importJSON(backup);
+  const state = store.syncState();
+  assert.equal(state.records[0].updatedAt, '2026-03-01T00:00:00.000Z');
+  assert.equal(state.wishlist[0].updatedAt, '2026-03-01T00:00:00.000Z');
+  assert.equal(state.confirmed['rg-x'], '2026-03-01T00:00:00.000Z');
+  assert.deepEqual(state.deleted, { records: {}, wishlist: {}, confirmed: {} });
+
+  const elsewhere = S.createStore(S.memoryStorage());
+  elsewhere.importJSON(backup);
+  assert.equal(elsewhere.syncState().confirmed['rg-x'], '1970-01-01T00:00:00.000Z', 'a backup does not say when you confirmed');
+});
+
 test('unreadable saved data is set aside instead of overwritten', () => {
   const storage = S.memoryStorage();
   storage.setItem(S.KEYS.records, '{oops');

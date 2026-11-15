@@ -12,11 +12,13 @@
   const KEYS = {
     records: 'recordcatalog.records.v1',
     wishlist: 'recordcatalog.wishlist.v1',
-    confirmed: 'recordcatalog.confirmed.v1', // releases you've confirmed came out on vinyl
+    confirmed: 'recordcatalog.confirmed.v2', // releases you've confirmed came out on vinyl, and when (v2: with times)
+    deleted: 'recordcatalog.deleted.v1', // what you deleted and when, so syncing another device's copy doesn't bring it back
     discographies: 'recordcatalog.discographies.v5', // v5: LP and 45/10" pressings tracked separately
     prefs: 'recordcatalog.prefs.v1',
   };
   const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4'];
+  const OLD_CONFIRMED = 'recordcatalog.confirmed.v1';
 
   // Vinyl only. Records saved earlier as CD or Cassette keep that format until you change it.
   const FORMATS = ['LP', 'Double LP', 'EP', '45', '10"', '12" single', 'Box set', 'Other'];
@@ -41,6 +43,10 @@
 
   const DAY = 24 * 60 * 60 * 1000;
   const DISCOGRAPHY_MAX_AGE = 7 * DAY;
+
+  const now = () => new Date().toISOString();
+  // The time of a change nobody wrote down, like a confirmation saved before they had times. Older than any real change.
+  const UNKNOWN_TIME = new Date(0).toISOString();
 
   // ---------- Text matching ----------
 
@@ -98,10 +104,18 @@
       releaseId: input.releaseId || null,
       // Imported records wait for a MusicBrainz lookup to fill in covers and years.
       pendingLookup: Boolean(input.pendingLookup),
-      addedAt: input.addedAt || new Date().toISOString(),
+      addedAt: input.addedAt || now(),
       // When this copy last changed, so two devices can tell which copy of a record is newer.
-      updatedAt: new Date().toISOString(),
+      updatedAt: now(),
     };
+  }
+
+  // A record as another copy of the app saved it, in a backup or on another device. It keeps the time
+  // it last changed. Copies saved before records had that time count from when the record was added.
+  function readRecord(input) {
+    const record = cleanRecord(input);
+    record.updatedAt = typeof input.updatedAt === 'string' ? input.updatedAt : record.addedAt;
+    return record;
   }
 
   // ---------- Collection helpers ----------
@@ -408,6 +422,29 @@
     };
   }
 
+  // { key: time } as saved, or as another device sent it, read into a Map. Entries without a time are left out.
+  function timesFrom(value) {
+    const times = new Map();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return times;
+    for (const [key, at] of Object.entries(value)) if (typeof at === 'string') times.set(key, at);
+    return times;
+  }
+
+  // In key order, so two devices holding the same times write them the same way.
+  const timesObject = (times) => Object.fromEntries([...times].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
+  // What you deleted, by list: record ids, wish ids and vinyl keys, each with when you deleted it.
+  const markersFrom = (value) => ({
+    records: timesFrom(value && value.records),
+    wishlist: timesFrom(value && value.wishlist),
+    confirmed: timesFrom(value && value.confirmed),
+  });
+  const markersObject = (marks) => ({
+    records: timesObject(marks.records),
+    wishlist: timesObject(marks.wishlist),
+    confirmed: timesObject(marks.confirmed),
+  });
+
   /*
    * Pass window.localStorage in the browser. Pass nothing (or null) when storage is
    * blocked and the store keeps everything in memory for this visit only.
@@ -449,26 +486,58 @@
       }
     }
 
+    // Confirmations saved as a plain list, before they had times, move to the new key with unknown times.
+    function loadConfirmed() {
+      const saved = read(KEYS.confirmed, null);
+      if (saved) return timesFrom(saved);
+      const old = read(OLD_CONFIRMED, null);
+      const times = new Map((Array.isArray(old) ? old : []).filter((key) => typeof key === 'string').map((key) => [key, UNKNOWN_TIME]));
+      if (Array.isArray(old)) {
+        try {
+          write(KEYS.confirmed, timesObject(times));
+          backend.removeItem(OLD_CONFIRMED);
+        } catch (ignored) {}
+      }
+      return times;
+    }
+
     const withCurrentFormat = (record) => (RENAMED_FORMATS[record.format] ? { ...record, format: currentFormat(record.format) } : record);
     let records = loadList(KEYS.records).map(withCurrentFormat);
     let wishes = loadList(KEYS.wishlist).map(withCurrentFormat);
-    const confirmed = new Set(read(KEYS.confirmed, []).filter((key) => typeof key === 'string'));
+    let confirmed = loadConfirmed(); // vinyl key → when you confirmed it
+    let deleted = markersFrom(read(KEYS.deleted, null));
     for (const key of OLD_KEYS) {
       try {
         backend.removeItem(key);
       } catch (ignored) {}
     }
 
+    function syncState() {
+      return {
+        records: records.slice(),
+        wishlist: wishes.slice(),
+        confirmed: timesObject(confirmed),
+        deleted: markersObject(deleted),
+      };
+    }
+
     function commit() {
-      write(KEYS.records, records);
-      write(KEYS.wishlist, wishes);
-      write(KEYS.confirmed, [...confirmed]);
+      const state = syncState();
+      write(KEYS.records, state.records);
+      write(KEYS.wishlist, state.wishlist);
+      write(KEYS.confirmed, state.confirmed);
+      write(KEYS.deleted, state.deleted);
       listeners.forEach((listener) => listener());
     }
 
     // Getting a record ticks it off the wishlist.
     function dropWishesYouOwn() {
-      wishes = wishes.filter((wish) => !records.some((record) => sameAlbum(record, wish)));
+      const at = now();
+      wishes = wishes.filter((wish) => {
+        if (!records.some((record) => sameAlbum(record, wish))) return true;
+        deleted.wishlist.set(wish.id, at);
+        return false;
+      });
     }
 
     function find(id) {
@@ -492,6 +561,7 @@
         if (copy) throw new Error(`"${copy.title}" is already in your collection.`);
         if (find(record.id)) record.id = newId();
         records.push(record);
+        deleted.records.delete(record.id);
         dropWishesYouOwn();
         commit();
         return record;
@@ -513,6 +583,7 @@
         if (wanted) throw new Error(`"${wanted.title}" is already on your wishlist.`);
         if (wishes.some((w) => w.id === wish.id)) wish.id = newId();
         wishes.push(wish);
+        deleted.wishlist.delete(wish.id);
         commit();
         return wish;
       },
@@ -531,18 +602,22 @@
 
       confirmVinyl(key) {
         if (!key || confirmed.has(key)) return;
-        confirmed.add(key);
+        confirmed.set(key, now());
+        deleted.confirmed.delete(key);
         commit();
       },
 
       unconfirmVinyl(key) {
-        if (confirmed.delete(key)) commit();
+        if (!confirmed.delete(key)) return;
+        deleted.confirmed.set(key, now());
+        commit();
       },
 
       removeFromWishlist(id) {
         const wish = wishes.find((w) => w.id === id) || null;
         if (!wish) return null;
         wishes = wishes.filter((w) => w.id !== id);
+        deleted.wishlist.set(id, now());
         commit();
         return wish;
       },
@@ -578,6 +653,7 @@
           }
           if (find(record.id)) record.id = newId();
           records.push(record);
+          deleted.records.delete(record.id);
           added.push(record);
         }
         if (added.length) {
@@ -589,8 +665,13 @@
 
       removeMany(ids) {
         const gone = new Set(ids);
+        const at = now();
         const before = records.length;
-        records = records.filter((r) => !gone.has(r.id));
+        records = records.filter((r) => {
+          if (!gone.has(r.id)) return true;
+          deleted.records.set(r.id, at);
+          return false;
+        });
         if (records.length !== before) commit();
       },
 
@@ -598,6 +679,7 @@
         const record = find(id);
         if (!record) return null;
         records = records.filter((r) => r.id !== id);
+        deleted.records.set(id, now());
         commit();
         return record;
       },
@@ -605,7 +687,7 @@
       // Remembers which MusicBrainz artist a hand-typed artist name refers to.
       linkArtist(name, artistId) {
         const key = normArtist(name);
-        const updatedAt = new Date().toISOString();
+        const updatedAt = now();
         let changed = 0;
         records = records.map((record) => {
           if (record.artistId || normArtist(record.artist) !== key) return record;
@@ -618,7 +700,7 @@
 
       exportJSON() {
         return JSON.stringify({
-          app: 'recordcatalog', version: 3, exportedAt: new Date().toISOString(), records, wishlist: wishes, vinylConfirmed: [...confirmed],
+          app: 'recordcatalog', version: 3, exportedAt: now(), records, wishlist: wishes, vinylConfirmed: [...confirmed.keys()],
         }, null, 2);
       },
 
@@ -634,23 +716,23 @@
         if (!Array.isArray(list)) throw new Error("That file doesn't look like a Record Catalog backup.");
 
         const ids = new Set([...records, ...wishes].map((record) => record.id));
-        const merge = (items, into, alsoSkip = []) => {
+        const merge = (items, into, marks, alsoSkip = []) => {
           let count = 0;
           let skipped = 0;
           for (const item of items) {
             let record;
             try {
-              record = cleanRecord(item || {});
+              record = readRecord(item || {});
             } catch (e) {
               skipped++;
               continue;
             }
-            // Keep the backup's change time. Backups from before change times count from when the record was added.
-            record.updatedAt = typeof item.updatedAt === 'string' ? item.updatedAt : record.addedAt;
             if (ids.has(record.id) || into.some((r) => sameAlbum(r, record)) || alsoSkip.some((r) => sameAlbum(r, record))) {
               skipped++;
               continue;
             }
+            // Bringing back something you deleted counts as a change made now, so a sync keeps it.
+            if (marks.delete(record.id)) record.updatedAt = now();
             ids.add(record.id);
             into.push(record);
             count++;
@@ -658,14 +740,22 @@
           return { count, skipped };
         };
 
-        const fromRecords = merge(list, records);
-        const fromWishlist = merge(Array.isArray(data.wishlist) ? data.wishlist : [], wishes, records);
+        const fromRecords = merge(list, records, deleted.records);
+        const fromWishlist = merge(Array.isArray(data.wishlist) ? data.wishlist : [], wishes, deleted.wishlist, records);
         dropWishesYouOwn();
         const confirmedBefore = confirmed.size;
-        for (const key of Array.isArray(data.vinylConfirmed) ? data.vinylConfirmed : []) if (typeof key === 'string') confirmed.add(key);
+        for (const key of Array.isArray(data.vinylConfirmed) ? data.vinylConfirmed : []) {
+          if (typeof key !== 'string' || confirmed.has(key)) continue;
+          // A backup doesn't say when you confirmed, so the time is unknown, unless it brings back one you took back.
+          confirmed.set(key, deleted.confirmed.delete(key) ? now() : UNKNOWN_TIME);
+        }
         if (fromRecords.count || fromWishlist.count || confirmed.size > confirmedBefore) commit();
         return { added: fromRecords.count, skipped: fromRecords.skipped, wishes: fromWishlist.count };
       },
+
+      // What syncs between devices: the records, the wishlist, the vinyl confirmations, and what you
+      // deleted from each, with times. Preferences and the discography cache stay on this device.
+      syncState,
 
       getDiscography(artistId) {
         const entry = read(KEYS.discographies, {})[artistId];
