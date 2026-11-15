@@ -19,6 +19,10 @@
   const SEARCH_RESULT_LIMIT = 500;
   // Release years are searched from here on; earlier dates (there's no vinyl that old) still count.
   const FIRST_YEAR = 1900;
+  // MusicBrainz scores text only, so a tribute album titled "Radiohead" can outrank Radiohead's own
+  // records. How many pressings of an album a search returns is a fair sign of how well known it is,
+  // so an album's best score gets this times the natural log of its pressings on top.
+  const PRESSINGS_WEIGHT = 5;
 
   // The vinyl formats that count. Flexi-disc and VinylDisc (a CD/vinyl hybrid) don't. LPs and 12"
   // records always count; 45s (7") and 10" records are "small" and count only when turned on.
@@ -130,6 +134,20 @@
     return `(${name}:${phrase(text.trim())}^3 OR ${name}:(${terms(text, prefixLast)}))`;
   }
 
+  // Matches only when every word turns up in one of the fields, in any order, so "radiohead kid"
+  // needs "radiohead" somewhere and "kid" somewhere. A word of 4 letters or more may have one typo
+  // ("metalica"), and the last word also counts as a prefix however short it is, since the other
+  // words narrow it down ("dark side of the mo").
+  function everyWord(fields, text) {
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean).map(escapeWord);
+    return `(${words.map((word, i) => {
+      const forms = [word];
+      if (i === words.length - 1) forms.push(`${word}*`);
+      if (word.length >= 4 && /^[\p{L}\p{N}]+$/u.test(word)) forms.push(`${word}~1`);
+      return `(${fields.map((name) => `${name}:(${forms.join(' ')})`).join(' OR ')})`;
+    }).join(' AND ')})`;
+  }
+
   // Words with an allowance for typos: "metalica~" also finds "Metallica". Punctuation splits words
   // ("T.Rex" is "t rex"); short words and ones with apostrophes are matched as typed.
   function fuzzyTerms(text) {
@@ -202,14 +220,20 @@
    * there's none. 45s and 10" records count only when small is on.
    */
   async function searchReleaseGroups(text, signal, small) {
-    const words = ['release', 'artist'].map((name) => field(name, text, true)).join(' OR ');
+    // Results matching every word, in the title, the artist or a release note like "blue album", rank
+    // well above those matching only some.
+    const words = `${field('release', text, true)} OR ${field('artist', text, true)} OR ${everyWord(['release', 'artist', 'comment'], text)}^4`;
     const query = `(${words}) AND (${vinylQuery(small)} OR primarytype:album)`;
     const data = await get('release', { query, limit: 100 }, signal);
 
+    // Every pressing counts here, CDs too, as a sign of how well known the album is.
+    const pressings = new Map();
     const albums = new Map();
     for (const release of data.releases || []) {
       const group = release['release-group'] || {};
       if (!group.id || SKIPPED_STATUSES.includes(release.status)) continue;
+      const seen = pressings.get(group.id) || { count: 0, score: 0 };
+      pressings.set(group.id, { count: seen.count + 1, score: Math.max(seen.score, release.score || 0) });
       const vinyl = formatsOf(release).some((format) => allowedVinyl(format, small));
       const studio = group['primary-type'] === 'Album' && !(group['secondary-types'] || []).length;
 
@@ -232,8 +256,13 @@
     }
 
     const dateOf = (album) => (album.vinyl ? album.vinylDate : album.anyDate) || '';
+    const rank = (album) => {
+      const { count, score } = pressings.get(album.group.id);
+      return score + PRESSINGS_WEIGHT * Math.log(count);
+    };
     return [...albums.values()]
-      .sort((a, b) => b.score - a.score
+      .sort((a, b) => rank(b) - rank(a)
+        || b.score - a.score
         || Number(b.vinyl) - Number(a.vinyl)
         || typeRank(a.group) - typeRank(b.group)
         || (dateOf(a) || '9999').localeCompare(dateOf(b) || '9999'))

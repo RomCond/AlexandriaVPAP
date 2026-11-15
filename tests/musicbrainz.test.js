@@ -67,7 +67,10 @@ test('search looks for vinyl pressings and studio albums by title or artist name
   assert.equal(calls[0].searchParams.get('fmt'), 'json');
   assert.equal(calls[0].searchParams.get('query'),
     '((release:"radiohead ok comp"^3 OR release:(radiohead ok comp comp*))'
-    + ' OR (artist:"radiohead ok comp"^3 OR artist:(radiohead ok comp comp*)))'
+    + ' OR (artist:"radiohead ok comp"^3 OR artist:(radiohead ok comp comp*))'
+    + ' OR ((release:(radiohead radiohead~1) OR artist:(radiohead radiohead~1) OR comment:(radiohead radiohead~1))'
+    + ' AND (release:(ok) OR artist:(ok) OR comment:(ok))'
+    + ' AND (release:(comp comp* comp~1) OR artist:(comp comp* comp~1) OR comment:(comp comp* comp~1)))^4)'
     + ' AND (format:(vinyl OR 12vinyl) OR primarytype:album)', 'LPs and 12" records (by default), plus studio albums');
   assert.deepEqual(results[0], {
     releaseGroupId: 'rg1',
@@ -83,6 +86,35 @@ test('search looks for vinyl pressings and studio albums by title or artist name
     formatHint: null,
     media: '',
   });
+});
+
+test('matches with every word rank first, allowing a typo and a half-typed last word', async (t) => {
+  const queries = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    queries.push(new URL(url).searchParams.get('query'));
+    return jsonResponse({ releases: [] });
+  });
+  await mb.search('dark side of the mo');
+  assert.match(queries[0], /\(release:\(mo mo\*\) OR artist:\(mo mo\*\) OR comment:\(mo mo\*\)\)\)\^4\)/, 'a last word of 2 letters is a prefix too');
+  assert.match(queries[0], /\(release:\(dark dark~1\) OR artist:\(dark dark~1\) OR comment:\(dark dark~1\)\)/, 'one typo allowed');
+  assert.match(queries[0], /\(release:\(of\) OR artist:\(of\) OR comment:\(of\)\)/, 'short words must match as typed');
+  await mb.search('ac/dc back');
+  assert.match(queries[1], /\(release:\(ac\\\/dc\) OR artist:\(ac\\\/dc\) OR comment:\(ac\\\/dc\)\)/, 'no typo allowance for words with punctuation');
+});
+
+test('an album with many pressings outranks a lone pressing that matches slightly better', async (t) => {
+  const tribute = { id: 'tribute', title: 'Rumours', type: 'Album' };
+  const rumours = { id: 'rumours', title: 'Rumours', type: 'Album' };
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse({
+    releases: [
+      pressing('r1', tribute, { score: 100, artist: 'The Rumours' }),
+      pressing('r2', rumours, { score: 97, artist: 'Fleetwood Mac' }),
+      pressing('r3', rumours, { score: 97, artist: 'Fleetwood Mac' }),
+      pressing('r4', rumours, { score: 97, artist: 'Fleetwood Mac', formats: ['CD'] }), // CDs count as pressings too
+    ],
+  }));
+  const { results } = await mb.search('rumours');
+  assert.deepEqual(results.map((r) => r.artist), ['Fleetwood Mac', 'The Rumours']);
 });
 
 test('search shows each vinyl album or single once, and leaves out what never came out on vinyl', async (t) => {

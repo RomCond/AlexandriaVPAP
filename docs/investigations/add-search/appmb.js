@@ -5,11 +5,19 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { execFileSync } = require('child_process');
 const mbcache = require('./mbcache');
 
-const source = fs.readFileSync(path.join(__dirname, '../../../js/musicbrainz.js'), 'utf8')
-  // The cache does its own pacing, so the app's queue doesn't need to wait between cached replies.
-  .replace('const MIN_GAP_MS = 1100;', 'const MIN_GAP_MS = 0;');
+// The approaches are measured on the app as it was before this investigation (commit bf604df), so
+// "current" stays today's search after the app changes. APP_SOURCE=worktree loads js/musicbrainz.js
+// as it is now instead, to check that the app does what an approach scored.
+const APP_SOURCE = process.env.APP_SOURCE || 'bf604df';
+const original = APP_SOURCE === 'worktree'
+  ? fs.readFileSync(path.join(__dirname, '../../../js/musicbrainz.js'), 'utf8')
+  : execFileSync('git', ['show', `${APP_SOURCE}:js/musicbrainz.js`], { cwd: __dirname, encoding: 'utf8' });
+
+// The cache does its own pacing, so the app's queue doesn't need to wait between cached replies.
+const source = original.replace('const MIN_GAP_MS = 1100;', 'const MIN_GAP_MS = 0;');
 
 let rewrite = null;
 let lastRaw = null;
