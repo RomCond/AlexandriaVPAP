@@ -57,22 +57,27 @@
 
   // The main color of a cover, for tinting the screen behind it. A small copy is drawn to a canvas
   // and sampled, which needs the image server to allow cross-origin reads. When it doesn't, or there's
-  // no cover, this falls back to the record's placeholder color.
+  // no cover, this falls back to the record's placeholder color. A color read from a cover is kept
+  // with the record, so the next time it shows at once, without downloading anything.
   const albumColors = new Map();
 
   function albumColor(item) {
     const fallback = labelColor(item);
     if (!item.releaseGroupId) return Promise.resolve(fallback);
+    if (item.coverColor) return Promise.resolve(item.coverColor);
     if (!albumColors.has(item.releaseGroupId)) {
       albumColors.set(item.releaseGroupId, new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          let color = null;
           try {
-            resolve(mainColor(img) || fallback);
+            color = mainColor(img);
           } catch (e) {
-            resolve(fallback); // the browser refused to read the pixels
+            // the browser refused to read the pixels
           }
+          if (color) store.setCoverColor(item.id, color);
+          resolve(color || fallback);
         };
         img.onerror = () => resolve(fallback);
         img.src = mb.coverUrl(item.releaseGroupId, 250);

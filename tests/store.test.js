@@ -149,6 +149,40 @@ test('changing the artist name drops the old MusicBrainz artist link', () => {
   assert.equal(store.update(record.id, { artist: 'Thom Yorke' }).artistId, null);
 });
 
+test('a cover color is saved with the record without redrawing anything', () => {
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const record = store.add({ artist: 'Radiohead', title: 'Kid A', releaseGroupId: 'rg-kida' });
+  assert.equal(record.coverColor, null);
+  let changes = 0;
+  store.onChange(() => changes++);
+  store.setCoverColor(record.id, 'rgb(12 34 56)');
+  assert.equal(changes, 0, 'nothing on screen depends on it');
+  assert.equal(store.get(record.id).coverColor, 'rgb(12 34 56)');
+  assert.equal(S.createStore(storage).get(record.id).coverColor, 'rgb(12 34 56)', 'saved for next time');
+  // Only colors in the form the app reads them are kept
+  store.setCoverColor(record.id, 'red; background: url(x)');
+  store.setCoverColor('no-such-record', 'rgb(1 2 3)');
+  assert.equal(store.get(record.id).coverColor, 'rgb(12 34 56)');
+  assert.equal(store.add({ artist: 'Radiohead', title: 'Amnesiac', coverColor: 'url(x)' }).coverColor, null);
+});
+
+test('a cover color goes with a new cover, and backups carry it', () => {
+  const store = S.createStore(S.memoryStorage());
+  const record = store.add({ artist: 'Radiohead', title: 'Kid A', releaseGroupId: 'rg-kida' });
+  store.setCoverColor(record.id, 'rgb(12 34 56)');
+  assert.equal(store.update(record.id, { notes: 'First pressing' }).coverColor, 'rgb(12 34 56)');
+
+  const copy = S.createStore(S.memoryStorage());
+  copy.importJSON(store.exportJSON());
+  assert.equal(copy.all()[0].coverColor, 'rgb(12 34 56)');
+  // Backups made before colors were saved still load
+  copy.importJSON(JSON.stringify([{ artist: 'Portishead', title: 'Dummy' }]));
+  assert.equal(copy.all()[1].coverColor, null);
+
+  assert.equal(store.update(record.id, { releaseGroupId: 'rg-kida-deluxe' }).coverColor, null, 'the old color belongs to the old cover');
+});
+
 test('linkArtist fills in the artist id only on unlinked records with that name', () => {
   const store = S.createStore(S.memoryStorage());
   store.add({ artist: 'Nirvana', title: 'Nevermind' });

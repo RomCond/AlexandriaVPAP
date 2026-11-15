@@ -585,6 +585,20 @@ test('the random pick shows the 500px cover while the 1200px one loads', { skip:
     await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
     assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
 
+    // The cover's main color is kept with the record. After a reload the card takes it at once,
+    // without reading the cover again.
+    const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
+    await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    assert.equal(saved, await tint());
+    await page.reload();
+    const colorReads = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-250')).length;
+    const readsBefore = colorReads();
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    assert.equal(await tint(), saved);
+    assert.equal(colorReads(), readsBefore, 'no second read of the cover');
+
     // Without a 1200px cover, the 500px one stays
     await page.selectOption('#random-format', 'LP');
     await page.click('#spin-btn');
