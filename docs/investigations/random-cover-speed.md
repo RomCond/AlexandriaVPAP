@@ -1,6 +1,6 @@
 # Random pick: showing the cover sooner
 
-Iteration 1: measurements and options. No app code has changed yet.
+Iteration 1 measured the first hop and compared options. Iteration 2 measures the archive.org hops and builds what the user chose. The options and recommendation below are still iteration 1's and will be updated at the end of iteration 2.
 
 ## Short answer
 
@@ -27,8 +27,8 @@ So the person waits for this:
 
 ```
 tap -> hop 1: coverartarchive.org 307
-    -> hop 2: archive.org/download/...       (not measured, blocked here)
-    -> hop 3: archive.org storage server      (expected, not verified)
+    -> hop 2: archive.org/download/... 302
+    -> hop 3: a storage server such as dn720706.ca.archive.org, 200
     -> 1200px JPEG bytes -> decode -> 0.25 s fade
 ```
 
@@ -37,8 +37,9 @@ In parallel, the 250px color image runs through the same chain.
 ## How this was measured
 
 - Date: 2026-11-15. All requests ran from a cloud container through its egress proxy. A phone on Wi-Fi or 4G will see different round trip times.
-- **archive.org is not on this environment's network allowlist.** The proxy refused the connection on the first try, so hops 2 and 3, image byte sizes and archive.org's cache headers are not measured. The browser script aborts archive.org requests locally so it never calls the blocked host again.
-- Requests were few and mostly sequential: about 30 curl requests and three browser runs of 13 to 21 requests each to coverartarchive.org, at most 2 a second. The app's grid loads its 4 covers at once, as it does in real use.
+- In iteration 1, archive.org was not on this environment's network allowlist, so only hop 1 was measured. For iteration 2 the user allowed it. `measure-archive.sh` then followed the whole chain for 5 covers at 250, 500 and 1200px, one request at a time. The raw output is in `random-cover-speed/results-archive.tsv`.
+- The sandbox proxy reset two connections in the middle of a chain. Those two chains are missing a size. No request was refused.
+- Requests were few and mostly sequential: about 30 curl requests and three browser runs of 13 to 21 requests each to coverartarchive.org in iteration 1, and about 80 curl requests across the whole chain in iteration 2, at most 2 a second. The app's grid loads its 4 covers at once, as it does in real use.
 - Scripts are in `docs/investigations/random-cover-speed/`. See [Rerunning](#rerunning).
 
 ## Findings
@@ -56,18 +57,33 @@ access-control-allow-origin: *
 
 There is no `Cache-Control` and no `Expires`, so browsers do not cache it. `access-control-allow-origin` comes back only when the request sends an `Origin` header, as the color read does. The target encodes the size (`_thumb250`, `_thumb500`, `_thumb1200`), so one lookup gives the target for every size. The JSON index at `/release-group/<id>` also redirects to archive.org, so it cannot skip archive.org either.
 
+Hop 2 is a `302` from `archive.org/download/` to a storage server, such as `dn720706.ca.archive.org` or `ia801403.us.archive.org`. Hop 3 is that server sending the JPEG. Real headers (measured):
+
+```
+hop 2: HTTP/2 302, location: https://dn720706.ca.archive.org/0/items/mbid-.../..._thumb500.jpg,
+       access-control-allow-origin: *, no cache-control, no expires
+hop 3: HTTP/2 200, content-type: image/jpeg, last-modified, etag, access-control-allow-origin: *,
+       no cache-control on *.ca.archive.org, cache-control: max-age=21600 on *.us.archive.org
+```
+
+Pass 1 times every hop on a new connection, so it shows the most a hop can cost. Subtracting the connection setup shows roughly what a hop costs on a connection that is already open.
+
 | Hop | What | Time | Label |
 | --- | --- | --- | --- |
-| 1 | coverartarchive.org 307, new connection (curl, 5 covers) | 428 to 694 ms, median 484 ms. Connection setup is 276 to 540 ms of that. | Measured |
+| 1 | coverartarchive.org 307, new connection (curl, 15 chains in iteration 2) | 381 to 631 ms, median 424 ms. Without the connection setup: median 145 ms. | Measured |
 | 1 | coverartarchive.org 307, kept-alive connection (curl, 14 requests) | 138 to 161 ms, median 149 ms | Measured |
 | 1 | Same, from Chromium (`fetch` with `redirect: 'manual'`, 14 requests) | 180 to 244 ms, after a first request of 607 to 671 ms | Measured |
 | 1 | `robots.txt` on the same host, kept-alive, for comparison | 148 to 154 ms, against 144 to 148 ms for lookups on that connection | Measured |
-| 2 | archive.org `/download/` | Not measured | Blocked |
-| 3 | archive.org storage server, then the image bytes | Not measured | Blocked |
+| 2 | archive.org 302, new connection (15 chains) | 307 to 720 ms, median 338 ms. Without the connection setup: median 128 ms. | Measured |
+| 3 | Storage server 200 with the image, new connection (15 chains) | 434 to 1026 ms, median 658 ms. Without the connection setup: median 410 ms. | Measured |
+| 1 to 3 | Whole chain, every hop on a new connection (15 chains) | 1130 to 2167 ms, median about 1.5 s | Measured |
+| 1 to 3 | Whole chain, one connection pool (curl, 10 chains) | 563 to 1499 ms. Redirects alone: 240 to 433 ms after the first chain. | Measured |
 
-Hop 1 costs the same for 250, 500 and 1200. A static file on the same host takes as long as the lookup. So hop 1 is one network round trip, and the archive's own lookup time is too small to see. On a cold connection it also pays connection setup.
+Hop 1 costs the same for 250, 500 and 1200. A static file on the same host takes as long as the lookup. So hop 1 is one network round trip, and the archive's own lookup time is too small to see. Hop 2 is also about one round trip.
 
-How archive.org serves `/download/` is not verified here. It is expected to redirect to a storage server whose host name changes from item to item. If so, every cover opens a new connection to a new host. That would make hops 2 and 3 the largest part of the wait. Estimated total wait today on a phone: 0.4 to 2 s per pick. That is about 7 to 12 round trips at 50 to 150 ms each: hop 1, hop 2, a new connection for hop 3, then the bytes. Server time comes on top. Iteration 2 should measure this.
+**The storage server is the slow part.** It changes from cover to cover, and sometimes between the sizes of one cover or between two requests for the same file. For example, e404b349's 250px came once from `ia600601.us` and once from `dn710800.ca`. So almost every cover opens a new connection to a new host, and the browser cannot keep one open in advance. In the warm pass, a 1200px file from a storage server whose connection was already open took 563 to 622 ms in total. From a new storage server it took 944 to 977 ms (measured).
+
+In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and a new connection. Hop 1 took 520 to 743 ms in the app for 33 of 35 requests, with one at 232 ms and one at 1637 ms (measured, iteration 1). curl reached the same hosts over HTTP/2. A phone without this proxy should behave more like curl.
 
 In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and a new connection. Hop 1 took 520 to 743 ms in the app for 33 of 35 requests, with one at 232 ms and one at 1637 ms (measured). curl reached the same host over HTTP/2 and reused its connection. A phone without this proxy should behave more like curl. Treat the 520 to 743 ms as a sandbox worst case.
 
@@ -81,10 +97,21 @@ In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and
 | --- | --- | --- | --- | --- |
 | Decode time on this machine | 1.3 ms | 3.6 ms | 20.6 ms | Measured |
 | Color sampling (`mainColor`) on this machine | 0.9 ms | 2.8 ms | 13.2 ms | Measured |
-| Bytes of a real cover | about 15 to 30 KB | about 40 to 100 KB | about 150 to 500 KB | Estimated |
+| Bytes of a real cover (4 or 5 covers) | 22 to 40 KB, median 28 KB | 41 to 90 KB, median 83 KB | 66 to 340 KB, median 259 KB | Measured |
+| 1200px size compared with 500px, same cover | | | 1.6 to 4.0 times, median 3.2 | Measured |
 | Extra transfer time of 1200 over 500, phone, new connection | | | about 100 to 300 ms, 2 more round trips | Estimated |
 
-Decode and sampling times use JPEGs generated in the page. They are not real covers, and a phone CPU is slower, perhaps 3 to 5 times. The byte estimate comes from the pixel count: 1200px has 5.8 times the pixels of 500px. JPEG size grows a little less than that.
+Decode and sampling times use JPEGs generated in the page. They are not real covers, and a phone CPU is slower, perhaps 3 to 5 times.
+
+The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop metadata. The color read downloads a third of a 500px cover just to sample 32x32 pixels.
+
+| Cover | 250px | 500px | 1200px |
+| --- | --- | --- | --- |
+| OK Computer (b1392450) | 41,268 B | 85,302 B | 268,304 B |
+| Kid A (e75c0549) | 29,967 B | 91,925 B | 348,178 B |
+| The Best Of (80975c59) | 22,901 B | 48,488 B | 194,721 B |
+| I Might Be Wrong (e404b349) | 28,274 B | 90,093 B | 265,464 B |
+| In Rainbows: From the Basement (d2f48ef0) | cut by a proxy reset | 42,117 B | 67,315 B |
 
 ### 3. Preloading and the color read
 
@@ -98,7 +125,7 @@ Decode and sampling times use JPEGs generated in the page. They are not real cov
 
 The random pick asks for `front-1200`. The grid asked for `front-500`. Different URLs, so **the grid's cover is never reused today** (measured: Kid A's 500px loaded in the grid, and the pick then requested 1200 and 250 anyway).
 
-`check-browser-reuse.js` tests Chromium's reuse rules against a local server that sends the same headers as the real 307. This tests browser behavior only, not archive.org's speed. It ran twice: once with an image that has `Cache-Control: max-age=86400`, and once with an image that has no cache headers. archive.org's real headers are unknown.
+`check-browser-reuse.js` tests Chromium's reuse rules against a local server that sends the same headers as the real 307. This tests browser behavior only, not archive.org's speed. It ran twice: once with an image that has `Cache-Control: max-age=86400`, and once with an image that has no cache headers. In iteration 2 the real storage-server headers turned out to sit in between: `Last-Modified` and `ETag`, plus `max-age=21600` on the `.us` servers only.
 
 | Case | Requests made (redirect / image) | Label |
 | --- | --- | --- |
@@ -112,7 +139,7 @@ What this means:
 
 - In one page session, reusing a loaded cover or a preloaded cover is free. No round trip at all.
 - A CORS load and a plain load of the same URL do not share. Mixing them costs at least hop 1 again.
-- After a reload, hop 1 is always paid again, because the 307 is not cacheable. Whether the image itself comes from cache depends on archive.org's headers, which are not measured.
+- After a reload, hops 1 and 2 are always paid again, because neither redirect is cacheable (measured headers). The image itself can come from the HTTP cache. `.us` servers allow 6 hours. `.ca` servers send only `Last-Modified`, so browsers guess a lifetime, usually a tenth of the file's age. Covers last changed months or years ago get days to weeks (estimated, from how browsers treat `Last-Modified`). The storage server can differ on the next visit, and the cache is keyed by the full address, so a cached cover is missed when the server changes.
 
 ## Options
 
