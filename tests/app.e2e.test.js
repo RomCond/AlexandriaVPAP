@@ -39,6 +39,10 @@ const DISCOGRAPHIES = {
     rg('rg-portishead', 'Portishead', '1997-09-29'),
     rg('rg-third', 'Third', '2008-04-28'),
   ],
+  'a-takanaka': [
+    rg('rg-seychelles', 'Seychelles', '1976-07-25'),
+    rg('rg-goblins', '虹伝説 THE RAINBOW GOBLINS', '1981-04-25'),
+  ],
 };
 
 // Answers to the "vinyl releases by this artist" search. Pablo Honey only has a bootleg
@@ -97,6 +101,16 @@ function fakeMusicBrainz(url) {
     const artistId = /arid:"([^"]+)"/.exec(query)[1];
     const releases = (query.includes('format:') ? VINYL_RELEASES : DELUXE_RELEASES)[artistId] || [];
     return { count: releases.length, offset: 0, releases };
+  }
+  if (url.pathname === '/ws/2/release' && query.includes('takanaka')) {
+    // MusicBrainz files him as 高中正義, and the sleeve credits Masayoshi Takanaka.
+    const group = { id: 'rg-goblins', title: '虹伝説 THE RAINBOW GOBLINS', 'primary-type': 'Album', 'secondary-types': [] };
+    return {
+      releases: [{
+        id: 'rel-goblins', status: 'Official', score: 100, title: group.title, date: '1981-04-25', 'release-group': group,
+        'artist-credit': [{ name: 'Masayoshi Takanaka', artist: { id: 'a-takanaka', name: '高中正義' } }], media: [{ format: '12" Vinyl' }],
+      }],
+    };
   }
   if (url.pathname === '/ws/2/release' && !query.startsWith('barcode:')) {
     // Typed search: vinyl pressings, grouped into albums by the app. Two pressings of OK Computer
@@ -575,6 +589,17 @@ test('a search for an artist opens their discography in one tap', { skip: !chrom
     assert.equal(await page.evaluate(() => location.hash), '#discography');
     assert.ok(mbCalls.some((url) => url.pathname === '/ws/2/release-group' && url.searchParams.get('artist') === 'a-radiohead'), 'it loads the artist by their MusicBrainz id');
     assert.match(await text(page, '#disco-missing'), /OK Computer/);
+
+    // An artist MusicBrainz files under another name shows as the sleeve credits them, and still
+    // opens by their MusicBrainz id
+    await openTab(page, 'add');
+    await searchBox.fill('takanaka rainbow goblins');
+    await page.locator('#search-results .artist-row', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.equal(await row.innerText(), 'Masayoshi Takanaka · Artist · See all albums');
+    await row.getByRole('button').click();
+    await page.locator('#disco-name', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.ok(mbCalls.some((url) => url.pathname === '/ws/2/release-group' && url.searchParams.get('artist') === 'a-takanaka'), 'it loads 高中正義 by id');
+    assert.match(await text(page, '#disco-missing'), /Seychelles/);
 
     // A barcode names no artist, so the row goes away
     await openTab(page, 'add');

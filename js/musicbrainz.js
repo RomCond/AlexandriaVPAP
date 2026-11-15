@@ -236,6 +236,8 @@
    * matches by its last word when that has 4 letters or more ("bowie"); shorter ones are too common
    * ("Toner Low" would match "low"). The artist comes from the pressings already found, so it costs
    * no extra request; with several, the one with the most pressings wins. Returns { id, name } or null.
+   * The name is the one that matched what was typed: the artist's own name when that matched, or else
+   * the name the records credit most often, so "takanaka" shows "Masayoshi Takanaka", not 高中正義.
    */
   function artistInResults(releases, text) {
     const words = plain(text).split(' ').filter(Boolean);
@@ -245,29 +247,37 @@
       if (k < words.length) runs.push(words.slice(words.length - k).join(' '));
     }
     const close = (run, name) => run === name || (name.length >= 5 && editDistance(run, name) <= 1);
+    const formsOf = (name) => {
+      const full = plain(name);
+      if (!full) return [];
+      const parts = full.split(' ');
+      return [full, full.replace(/^the /, ''), ...(parts.length === 2 && parts[1].length >= 4 ? [parts[1]] : [])];
+    };
+    const matches = (run, names) => names.some((name) => close(run, name));
 
     const artists = new Map();
     for (const release of releases) {
       const part = (release['artist-credit'] || [])[0];
       if (!part || !part.artist || !part.artist.id || SKIPPED_STATUSES.includes(release.status)) continue;
-      const artist = artists.get(part.artist.id) || { id: part.artist.id, name: part.artist.name, pressings: 0, names: new Set() };
+      const artist = artists.get(part.artist.id)
+        || { id: part.artist.id, name: part.artist.name, own: formsOf(part.artist.name), credits: new Map(), pressings: 0 };
       artist.pressings += 1;
-      for (const name of [part.name, part.artist.name].map(plain).filter(Boolean)) {
-        artist.names.add(name);
-        artist.names.add(name.replace(/^the /, ''));
-        const parts = name.split(' ');
-        if (parts.length === 2 && parts[1].length >= 4) artist.names.add(parts[1]);
-      }
+      const credited = part.name || part.artist.name;
+      const credit = artist.credits.get(credited) || { forms: formsOf(credited), pressings: 0 };
+      credit.pressings += 1;
+      artist.credits.set(credited, credit);
       artists.set(artist.id, artist);
     }
 
     let best = null;
     for (const artist of artists.values()) {
-      const run = runs.find((r) => [...artist.names].some((name) => close(r, name)));
+      const credits = [...artist.credits].sort((a, b) => b[1].pressings - a[1].pressings);
+      const run = runs.find((r) => matches(r, artist.own) || credits.some(([, credit]) => matches(r, credit.forms)));
       if (!run) continue;
       const length = run.split(' ').length;
       if (!best || artist.pressings > best.pressings || (artist.pressings === best.pressings && length > best.length)) {
-        best = { id: artist.id, name: artist.name, pressings: artist.pressings, length };
+        const name = matches(run, artist.own) ? artist.name : credits.find(([, credit]) => matches(run, credit.forms))[0];
+        best = { id: artist.id, name, pressings: artist.pressings, length };
       }
     }
     return best && { id: best.id, name: best.name };

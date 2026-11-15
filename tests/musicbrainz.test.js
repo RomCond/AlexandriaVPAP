@@ -144,6 +144,17 @@ test('search names the artist whose name was typed, from the pressings it found'
 
   releases = [credited(pressing('r1', album('soul', 'Soul Mining')), 'The The', 'a-thethe', 'THE THE')];
   assert.deepEqual((await mb.search('the the soul mining')).artist, { id: 'a-thethe', name: 'The The' }, 'the credited name counts too');
+
+  // The row shows the name that matched: the artist's own when it did, or else the credited one
+  const goblins = album('goblins', '虹伝説 THE RAINBOW GOBLINS');
+  releases = [
+    ...['r1', 'r2'].map((id) => credited(pressing(id, goblins), '高中正義', 'a-takanaka', 'Masayoshi Takanaka')),
+    credited(pressing('r3', goblins), '高中正義', 'a-takanaka'),
+  ];
+  assert.deepEqual((await mb.search('takanaka rainbow goblins')).artist, { id: 'a-takanaka', name: 'Masayoshi Takanaka' }, 'the credited name, with the artist\'s own id');
+  assert.deepEqual((await mb.search('高中正義')).artist, { id: 'a-takanaka', name: '高中正義' });
+  releases = [credited(pressing('r1', album('monster', 'Monster Movie')), 'Can', 'a-can', 'CAN')];
+  assert.deepEqual((await mb.search('can')).artist, { id: 'a-can', name: 'Can' }, 'the artist\'s own name when it matched');
   assert.equal((await mb.search('0 724352 775324')).artist, null, 'a barcode names no artist');
 });
 

@@ -424,4 +424,4 @@ if (require.main === module) main().catch((e) => {
   process.exit(1);
 });
 
-module.exports = { approaches, field, allWords, words, phrase, forms, VINYL, norm, score, artistId, isAlbum, rankOf, rerank, artistLookup, artistRows };
+module.exports = { approaches, field, allWords, words, phrase, forms, VINYL, norm, score, artistId, isAlbum, rankOf, rerank, artistLookup, artistRows, artistsInResults };
