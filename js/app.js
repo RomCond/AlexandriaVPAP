@@ -1052,13 +1052,19 @@
     const summary = [];
     if (items.length) summary.push(h('p', { class: 'import-count' }, `${plural(items.length, 'record')} to add.`));
     if (notes.length) summary.push(h('p', { class: 'muted small' }, notes.join(' ')));
+    const rowList = (className, message, rows) => h('div', { class: className },
+      h('p', {}, message),
+      h('ul', {}, rows.slice(0, 5).map((row) => h('li', {}, row))),
+      rows.length > 5 ? h('p', { class: 'small' }, `and ${rows.length - 5} more`) : null);
+    const leftOut = (n) => `so ${n === 1 ? "it's" : "they're"} left out.`;
+    if (read.kind === 'table' && read.notVinyl.length) {
+      const n = read.notVinyl.length;
+      summary.push(rowList('import-note', `${plural(n, 'row')} ${n === 1 ? 'is a CD or cassette' : 'are CDs or cassettes'}, ${leftOut(n)}`, read.notVinyl));
+    }
     if (read.unreadable.length) {
-      const shown = read.unreadable.slice(0, 5);
+      const n = read.unreadable.length;
       const needs = read.kind === 'table' ? 'Each row needs an artist and a title.' : 'Each line needs an artist, a dash with a space on each side, then the title.';
-      summary.push(importProblem(
-        h('p', {}, `${plural(read.unreadable.length, unit)} couldn't be read, so ${read.unreadable.length === 1 ? "it's" : "they're"} left out. ${needs}`),
-        h('ul', {}, shown.map((line) => h('li', {}, line))),
-        read.unreadable.length > shown.length ? h('p', { class: 'small' }, `and ${read.unreadable.length - shown.length} more`) : null));
+      summary.push(rowList('import-problem', `${plural(n, unit)} couldn't be read, ${leftOut(n)} ${needs}`, read.unreadable));
     }
     showImport(items.length ? { ...read, items } : null, summary);
   }

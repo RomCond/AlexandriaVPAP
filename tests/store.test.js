@@ -351,15 +351,21 @@ test('readImport reads a spreadsheet saved as CSV by the names in its first row'
     ',,,,,',
     'Weezer,Pinkerton (Deluxe Edition),2010,"Box Set, 2xLP",,',
     'Prince,Purple Rain,1984,Cassette,,',
+    'Björk,Post,1995,"CD, Single",,',
+    'Radiohead,In Rainbows,2007,"2xLP + CD",,',
+    'Portishead,Third,2008,Flexi-disc,,',
     '',
   ].join('\r\n'));
   assert.equal(read.kind, 'table');
   assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Notes']);
   assert.deepEqual(read.ignored, ['Label']);
   assert.deepEqual(read.unreadable, ['No Artist, 2000, LP'], 'a blank row is skipped, a row without an artist is listed');
+  assert.deepEqual(read.notVinyl, ['Prince, Purple Rain, 1984, Cassette', 'Björk, Post, 1995, CD, Single'], 'CD and cassette rows are left out');
   assert.equal(read.merged, 1);
   const byTitle = Object.fromEntries(read.items.map((item) => [item.title, item]));
-  assert.equal(read.items.length, 6);
+  assert.equal(read.items.length, 7);
+  assert.equal(byTitle['In Rainbows'].format, 'Double LP', 'a vinyl record with a CD inside is vinyl');
+  assert.equal(byTitle.Third.format, null, 'a format the app has no name for is left to Add as');
   assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: '' });
   assert.deepEqual(byTitle['Crosby Stills & Nash'], {
     artist: 'Crosby, Stills & Nash', title: 'Crosby Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold, "first press"',
@@ -369,7 +375,6 @@ test('readImport reads a spreadsheet saved as CSV by the names in its first row'
     artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: 'Signed; VG+; 2 copies',
   }, 'brackets become notes and repeats fold, as in a typed list');
   assert.deepEqual([byTitle['Pinkerton (Deluxe Edition)'].format, byTitle['Pinkerton (Deluxe Edition)'].year], ['Box set', 2010]);
-  assert.equal(byTitle['Purple Rain'].format, null, 'a format the app has no name for is left to Add as');
 });
 
 test('readImport reads TSV and semicolon CSV, and lines without column names as a typed list', () => {

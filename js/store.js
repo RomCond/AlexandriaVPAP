@@ -391,10 +391,17 @@
     return rows;
   }
 
+  // A format column that names a CD or cassette and no vinyl, like "CD, Album". "2xLP + CD" is vinyl.
+  const NOT_VINYL = /\b(?:cd|cdr|sacd|cassette|cass)\b/i;
+  const VINYL = /\b(?:\d*x?lp|vinyl|45|33)\b|\d+"|\d+ ?inch/i;
+  const isNotVinyl = (format) => NOT_VINYL.test(format) && !VINYL.test(format);
+
+  const rowText = (cells) => cells.map((value) => value.trim()).filter(Boolean).join(', ');
+
   /*
    * Reads CSV or TSV text whose first row names the columns, as a spreadsheet saves it, or returns null
    * when that row names no artist and title column. Returns { columns: [name], ignored: [name], items,
-   * unreadable: [row], merged }, where columns are the ones read and ignored are the rest.
+   * unreadable: [row], notVinyl: [row], merged }, where columns are the ones read and ignored are the rest.
    */
   function parseRecordTable(text) {
     const lines = text.replace(/\r\n?/g, '\n');
@@ -405,7 +412,12 @@
       const cell = (cells, field) => (field in at ? cells[at[field]] || '' : '');
       const entries = [];
       const unreadable = [];
+      const notVinyl = [];
       for (const cells of rows) {
+        if (isNotVinyl(cell(cells, 'format'))) {
+          notVinyl.push(rowText(cells));
+          continue;
+        }
         const entry = readEntry({
           artist: cell(cells, 'artist'),
           title: cell(cells, 'title'),
@@ -414,7 +426,7 @@
           notes: cell(cells, 'notes').trim(),
         });
         if (entry) entries.push(entry);
-        else unreadable.push(cells.map((value) => value.trim()).filter(Boolean).join(', '));
+        else unreadable.push(rowText(cells));
       }
       const used = Object.values(at);
       return {
@@ -422,6 +434,7 @@
         ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
         ...foldRepeats(entries),
         unreadable,
+        notVinyl,
       };
     }
     return null;
@@ -464,9 +477,9 @@
 
   /*
    * Reads pasted text or a chosen file, whichever kind it is:
-   *   { kind: 'backup', records, wishlist, vinylConfirmed }           a Record Catalog backup, for importBackup
-   *   { kind: 'table', columns, ignored, items, unreadable, merged }  CSV or TSV whose first row names the columns
-   *   { kind: 'list', items, unreadable, merged }                     one "Artist - Title" per line
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }                     a Record Catalog backup, for importBackup
+   *   { kind: 'table', columns, ignored, items, unreadable, notVinyl, merged }  CSV or TSV whose first row names the columns
+   *   { kind: 'list', items, unreadable, merged }                               one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
    * Throws when text that starts like a backup isn't one.
    */

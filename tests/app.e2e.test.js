@@ -685,6 +685,7 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
       'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
       'Björk,Homogenic,1997-09-22,,One Little Indian',
       ',Didn’t Say,1999,LP,',
+      'Prince,Purple Rain,1984,Cassette,Warner Bros.',
     ].join('\r\n');
     const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
     await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
@@ -694,6 +695,7 @@ test('imports a spreadsheet saved as CSV, and says what to do with an Excel file
     assert.match(summary, /Read the Artist, Album, Year and Format columns and left out the Label column\./);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
+    assert.match(summary, /1 row is a CD or cassette, so it's left out\.[\s\S]*Prince, Purple Rain, 1984, Cassette, Warner Bros\./);
     assert.ok(await page.locator('#import-format-field').isVisible());
     await page.selectOption('#import-format', 'Double LP');
     await shot(page, 'import-04-spreadsheet');
