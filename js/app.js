@@ -986,7 +986,9 @@
     event.target.value = '';
     if (!file) return;
     try {
-      const { added, skipped, wishes } = store.importJSON(await file.text());
+      const backup = S.readImport(await file.text());
+      if (backup.kind !== 'backup') throw new Error("That doesn't look like a Record Catalog backup.");
+      const { added, skipped, wishes } = store.importBackup(backup);
       let message = `Imported ${plural(added, 'record')}`;
       if (wishes) message += ` and ${wishes} for your wishlist`;
       if (skipped) message += `. Skipped ${skipped} already here or incomplete.`;

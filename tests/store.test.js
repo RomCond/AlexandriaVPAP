@@ -2,6 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../js/store.js');
 
+// What choosing a backup file in the import dialog does.
+const restore = (store, text) => store.importBackup(S.readImport(text));
+
 test('normTitle ignores case, accents, punctuation and edition notes', () => {
   assert.equal(S.normTitle('OK Computer (Remastered 2009)'), S.normTitle('ok computer'));
   assert.equal(S.normTitle('Rumours [Deluxe Edition]'), 'rumours');
@@ -126,7 +129,7 @@ test('backups carry vinyl confirmations', () => {
   const source = S.createStore(S.memoryStorage());
   source.confirmVinyl('gone-now');
   const target = S.createStore(S.memoryStorage());
-  target.importJSON(source.exportJSON());
+  restore(target, source.exportJSON());
   assert.equal(target.confirmedByYou('gone-now'), true);
 });
 
@@ -138,7 +141,7 @@ test('backups carry the wishlist too', () => {
 
   const target = S.createStore(S.memoryStorage());
   target.add({ artist: 'Weezer', title: 'Maladroit', releaseGroupId: 'mal' }); // already have it here
-  assert.deepEqual(target.importJSON(source.exportJSON()), { added: 1, skipped: 0, wishes: 1 });
+  assert.deepEqual(restore(target, source.exportJSON()), { added: 1, skipped: 0, wishes: 1 });
   assert.deepEqual(target.wishlist().map((w) => w.title), ['Pinkerton'], 'albums you already have stay off the wishlist');
 });
 
@@ -167,14 +170,26 @@ test('backups round trip and do not create duplicates', () => {
   const backup = source.exportJSON();
 
   const target = S.createStore(S.memoryStorage());
-  assert.deepEqual(target.importJSON(backup), { added: 2, skipped: 0, wishes: 0 });
-  assert.deepEqual(target.importJSON(backup), { added: 0, skipped: 2, wishes: 0 });
+  assert.deepEqual(restore(target, backup), { added: 2, skipped: 0, wishes: 0 });
+  assert.deepEqual(restore(target, backup), { added: 0, skipped: 2, wishes: 0 });
   assert.equal(target.all()[0].format, 'Double LP');
-  assert.deepEqual(target.importJSON(JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }])), { added: 1, skipped: 1, wishes: 0 });
+  assert.deepEqual(restore(target, JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }])), { added: 1, skipped: 1, wishes: 0 });
   // A backup from another device skips albums you already have, even with different ids
-  assert.deepEqual(target.importJSON(JSON.stringify([{ id: 'other-device', artist: 'portishead', title: 'Dummy' }])), { added: 0, skipped: 1, wishes: 0 });
-  assert.throws(() => target.importJSON('not json'), /valid backup/);
-  assert.throws(() => target.importJSON('{"hello": 1}'), /look like/);
+  assert.deepEqual(restore(target, JSON.stringify([{ id: 'other-device', artist: 'portishead', title: 'Dummy' }])), { added: 0, skipped: 1, wishes: 0 });
+  assert.throws(() => restore(target, '{"records": [}'), /valid backup/);
+  assert.throws(() => restore(target, '{"hello": 1}'), /look like/);
+});
+
+test('readImport knows a backup from a list that starts with a bracket', () => {
+  const source = S.createStore(S.memoryStorage());
+  source.add({ artist: 'Portishead', title: 'Dummy', releaseGroupId: 'rg-dummy' });
+  source.addToWishlist({ artist: 'Portishead', title: 'Third' });
+  const backup = S.readImport(source.exportJSON());
+  assert.equal(backup.kind, 'backup');
+  assert.deepEqual([backup.records.map((r) => r.releaseGroupId), backup.wishlist.map((w) => w.title)], [['rg-dummy'], ['Third']]);
+  assert.deepEqual(S.readImport('[]').records, [], 'an empty backup from an early version');
+  const list = S.readImport('[Signed] Rush - 2112');
+  assert.deepEqual([list.kind, list.items[0].artist], ['list', '[Signed] Rush']);
 });
 
 test('unreadable saved data is set aside instead of overwritten', () => {

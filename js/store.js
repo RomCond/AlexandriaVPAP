@@ -396,15 +396,35 @@
     return null;
   }
 
+  // A backup is a JSON object, or a JSON array of records from an early version.
+  const BACKUP_START = /^\s*(?:\{|\[\s*[{\]])/;
+
+  function parseBackup(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error("That isn't a valid backup.");
+    }
+    const records = Array.isArray(data) ? data : data && data.records;
+    if (!Array.isArray(records)) throw new Error("That doesn't look like a Record Catalog backup.");
+    const list = (value) => (Array.isArray(value) ? value : []);
+    return { records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
+  }
+
   /*
    * Reads pasted text or a chosen file, whichever kind it is:
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }           a Record Catalog backup, for importBackup
    *   { kind: 'table', columns, ignored, items, unreadable, merged }  CSV or TSV whose first row names the columns
    *   { kind: 'list', items, unreadable, merged }                     one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
+   * Throws when text that starts like a backup isn't one.
    */
   function readImport(text) {
-    const table = parseRecordTable(String(text || ''));
-    return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(text) };
+    const source = String(text || '');
+    if (BACKUP_START.test(source)) return { kind: 'backup', ...parseBackup(source) };
+    const table = parseRecordTable(source);
+    return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(source) };
   }
 
   // How alike two strings are, from 0 to 1: one minus the edit distance over the longer length.
@@ -742,17 +762,8 @@
         }, null, 2);
       },
 
-      // Merges a backup in. Albums you already have, or already want, are skipped.
-      importJSON(text) {
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error("That file isn't a valid backup.");
-        }
-        const list = Array.isArray(data) ? data : data && data.records;
-        if (!Array.isArray(list)) throw new Error("That file doesn't look like a Record Catalog backup.");
-
+      // Merges in a backup as readImport reads it. Albums you already have, or already want, are skipped.
+      importBackup(backup) {
         const ids = new Set([...records, ...wishes].map((record) => record.id));
         const merge = (items, into, alsoSkip = []) => {
           let count = 0;
@@ -776,11 +787,11 @@
           return { count, skipped };
         };
 
-        const fromRecords = merge(list, records);
-        const fromWishlist = merge(Array.isArray(data.wishlist) ? data.wishlist : [], wishes, records);
+        const fromRecords = merge(backup.records, records);
+        const fromWishlist = merge(backup.wishlist, wishes, records);
         dropWishesYouOwn();
         const confirmedBefore = confirmed.size;
-        for (const key of Array.isArray(data.vinylConfirmed) ? data.vinylConfirmed : []) if (typeof key === 'string') confirmed.add(key);
+        for (const key of backup.vinylConfirmed) if (typeof key === 'string') confirmed.add(key);
         if (fromRecords.count || fromWishlist.count || confirmed.size > confirmedBefore) commit();
         return { added: fromRecords.count, skipped: fromRecords.skipped, wishes: fromWishlist.count };
       },
