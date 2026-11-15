@@ -295,6 +295,118 @@
     return { ...foldRepeats(entries), unreadable };
   }
 
+  // What a spreadsheet's format column says, like "2xLP, Album", '7"' or "Vinyl". The first pattern that fits wins.
+  const COLUMN_FORMATS = [
+    ['12" single', /12"\s*single|\bmaxi\b/i],
+    ['Box set', /\bbox\b/i],
+    ['Double LP', /\b(?:2\s*x\s*lp|2lp|double)\b/i],
+    ['45', /\b45\b|7"|\b7 ?inch|\bsingle\b/i],
+    ['10"', /10"|\b10 ?inch/i],
+    ['EP', /\bep\b/i],
+    ['LP', /\blp\b|12"|\b12 ?inch|\bvinyl\b/i],
+  ];
+  const formatFromColumn = (value) => (COLUMN_FORMATS.find(([, pattern]) => pattern.test(value)) || [null])[0];
+
+  // The names a spreadsheet's first row might give each column, compared after fold and squash.
+  const COLUMNS = {
+    artist: ['artist', 'artists', 'artist name', 'album artist', 'band', 'performer'],
+    title: ['title', 'album', 'album title', 'album name', 'record', 'release', 'release title'],
+    year: ['year', 'release year', 'released', 'release date'],
+    format: ['format', 'media', 'medium'],
+    notes: ['notes', 'note', 'comments', 'comment'],
+  };
+  const DELIMITERS = [',', '\t', ';'];
+  const YEAR_IN_DATE = /\b(?:19|20)\d\d\b/;
+
+  // Which column holds each field, or null unless the header row names an artist and a title column.
+  function readHeader(cells) {
+    const at = {};
+    cells.forEach((cell, index) => {
+      const name = squash(fold(cell));
+      const field = Object.keys(COLUMNS).find((key) => COLUMNS[key].includes(name));
+      if (field && !(field in at)) at[field] = index;
+    });
+    return 'artist' in at && 'title' in at ? at : null;
+  }
+
+  // Splits CSV or TSV text into rows of cells. A quoted cell can hold the delimiter, a line break, or "" for a quote.
+  function splitRows(text, delimiter) {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch !== '"') cell += ch;
+        else if (text[i + 1] === '"') cell += text[++i];
+        else quoted = false;
+      } else if (ch === '"' && !cell) {
+        quoted = true;
+      } else if (ch === delimiter) {
+        row.push(cell);
+        cell = '';
+      } else if (ch === '\n') {
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = '';
+      } else {
+        cell += ch;
+      }
+    }
+    row.push(cell);
+    rows.push(row);
+    return rows;
+  }
+
+  /*
+   * Reads CSV or TSV text whose first row names the columns, as a spreadsheet saves it, or returns null
+   * when that row names no artist and title column. Returns { columns: [name], ignored: [name], items,
+   * unreadable: [row], merged }, where columns are the ones read and ignored are the rest.
+   */
+  function parseRecordTable(text) {
+    const lines = text.replace(/\r\n?/g, '\n');
+    for (const delimiter of DELIMITERS) {
+      const [head, ...rows] = splitRows(lines, delimiter).filter((cells) => cells.some((cell) => cell.trim()));
+      const at = head && readHeader(head);
+      if (!at) continue;
+      const cell = (cells, field) => (field in at ? cells[at[field]] || '' : '');
+      const entries = [];
+      const unreadable = [];
+      for (const cells of rows) {
+        const entry = readEntry({
+          artist: cell(cells, 'artist'),
+          title: cell(cells, 'title'),
+          year: (YEAR_IN_DATE.exec(cell(cells, 'year')) || [null])[0],
+          format: formatFromColumn(cell(cells, 'format')),
+          notes: cell(cells, 'notes').trim(),
+        });
+        if (entry) entries.push(entry);
+        else unreadable.push(cells.map((value) => value.trim()).filter(Boolean).join(', '));
+      }
+      const used = Object.values(at);
+      return {
+        columns: head.filter((name, index) => used.includes(index)).map((name) => name.trim()),
+        ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
+        ...foldRepeats(entries),
+        unreadable,
+      };
+    }
+    return null;
+  }
+
+  /*
+   * Reads pasted text or a chosen file, whichever kind it is:
+   *   { kind: 'table', columns, ignored, items, unreadable, merged }  CSV or TSV whose first row names the columns
+   *   { kind: 'list', items, unreadable, merged }                     one "Artist - Title" per line
+   * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
+   */
+  function readImport(text) {
+    const table = parseRecordTable(String(text || ''));
+    return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(text) };
+  }
+
   // How alike two strings are, from 0 to 1: one minus the edit distance over the longer length.
   // Swapping two neighbouring letters ("Maladriot") counts as one edit, like a missing or wrong one.
   function similarity(a, b) {
@@ -735,6 +847,7 @@
     compareDiscography,
     pickRandom,
     parseRecordList,
+    readImport,
     similarity,
     bestAlbumMatch,
     memoryStorage,

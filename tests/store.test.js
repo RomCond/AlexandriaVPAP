@@ -313,6 +313,56 @@ test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeat
   assert.equal(byTitle['By The Time I Get To Phoenix'].notes, '2 copies', 'tab-separated lines work too');
 });
 
+test('readImport reads a spreadsheet saved as CSV by the names in its first row', () => {
+  const read = S.readImport([
+    'Artist,Album,Year,Format,Label,Notes',
+    'Steely Dan,Aja,1977,LP,ABC,',
+    '"Crosby, Stills & Nash",Crosby Stills & Nash,1969-05-29,Vinyl,Atlantic,"Gatefold, ""first press"""',
+    'T. Rex,Teenage Dream,1974,"7""",EMI,"Bought in',
+    'London"',
+    'Rush,Moving Pictures (Signed),5/29/1981,2xLP,Mercury,VG+',
+    'Rush,Moving Pictures,,,,',
+    ',No Artist,2000,LP,,',
+    ',,,,,',
+    'Weezer,Pinkerton (Deluxe Edition),2010,"Box Set, 2xLP",,',
+    'Prince,Purple Rain,1984,Cassette,,',
+    '',
+  ].join('\r\n'));
+  assert.equal(read.kind, 'table');
+  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Notes']);
+  assert.deepEqual(read.ignored, ['Label']);
+  assert.deepEqual(read.unreadable, ['No Artist, 2000, LP'], 'a blank row is skipped, a row without an artist is listed');
+  assert.equal(read.merged, 1);
+  const byTitle = Object.fromEntries(read.items.map((item) => [item.title, item]));
+  assert.equal(read.items.length, 6);
+  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: '' });
+  assert.deepEqual(byTitle['Crosby Stills & Nash'], {
+    artist: 'Crosby, Stills & Nash', title: 'Crosby Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold, "first press"',
+  }, 'quoted cells keep their commas and quotes');
+  assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', 'Bought in\nLondon']);
+  assert.deepEqual(byTitle['Moving Pictures'], {
+    artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: 'Signed; VG+; 2 copies',
+  }, 'brackets become notes and repeats fold, as in a typed list');
+  assert.deepEqual([byTitle['Pinkerton (Deluxe Edition)'].format, byTitle['Pinkerton (Deluxe Edition)'].year], ['Box set', 2010]);
+  assert.equal(byTitle['Purple Rain'].format, null, 'a format the app has no name for is left to Add as');
+});
+
+test('readImport reads TSV and semicolon CSV, and lines without column names as a typed list', () => {
+  const tsv = S.readImport('Band\tTitle\tMedia\nPortishead\tDummy\t12"\n');
+  assert.equal(tsv.kind, 'table');
+  assert.deepEqual(tsv.items, [{ artist: 'Portishead', title: 'Dummy', year: null, format: 'LP', notes: '' }]);
+  const semicolons = S.readImport('artist;title;released\nBjörk;Debut;1993');
+  assert.deepEqual(semicolons.items, [{ artist: 'Björk', title: 'Debut', year: 1993, format: null, notes: '' }]);
+  const pasted = S.readImport('Artist\tTitle\nSteely Dan\tAja');
+  assert.deepEqual(pasted.items.map((item) => item.title), ['Aja'], 'a pasted header row is not a record');
+
+  assert.equal(S.readImport('Steely Dan - Aja\nRush - 2112').kind, 'list');
+  assert.equal(S.readImport('Steely Dan\tAja').kind, 'list', 'two pasted columns without names');
+  const commas = S.readImport('Earth, Wind & Fire - Spirit\nCrosby, Stills & Nash - CSN');
+  assert.deepEqual([commas.kind, commas.items.length], ['list', 2], 'commas in a typed list are not columns');
+  assert.equal(S.readImport('').kind, 'list');
+});
+
 const candidate = (title, extra = {}) => ({
   releaseGroupId: extra.id || title, title, artist: 'Weezer', artistId: 'w', year: 2001, primaryType: 'Album', secondaryTypes: [], ...extra,
 });
