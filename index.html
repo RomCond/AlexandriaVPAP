@@ -100,6 +100,10 @@
             <input type="search" name="q" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" placeholder="Album, artist, or barcode">
           </label>
           <button type="submit" class="primary">Search</button>
+          <button type="button" id="scan-btn" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4h1.5v12H2zM5 4h1v12H5zM7.5 4H10v12H7.5zM11.5 4h1v12h-1zM14 4h1.5v12H14zM17 4h1v12h-1z"/></svg>
+            Scan barcode
+          </button>
         </form>
         <p class="muted small hint">Type any part of a name, like "ok comp" or "radiohead kid", or the barcode from the sleeve. Results show up as you type. Only records that came out on vinyl are listed, plus studio albums whose vinyl isn't confirmed yet.</p>
         <div class="add-as">
@@ -235,10 +239,26 @@
     </form>
   </dialog>
 
+  <dialog id="scan-dialog" aria-labelledby="scan-heading">
+    <form method="dialog" class="edit-form">
+      <h2 id="scan-heading" tabindex="-1" autofocus>Scan a barcode</h2>
+      <p class="muted small">Point the camera at the barcode on the sleeve.</p>
+      <div class="scan-view">
+        <video id="scan-video" muted playsinline aria-hidden="true"></video>
+        <span class="scan-frame" aria-hidden="true"></span>
+      </div>
+      <p class="status" id="scan-hint" role="status" hidden></p>
+      <div class="dialog-actions">
+        <button value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/store.js"></script>
   <script src="js/musicbrainz.js"></script>
+  <script src="js/scanner.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
