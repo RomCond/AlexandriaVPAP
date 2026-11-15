@@ -304,7 +304,7 @@ test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeat
   assert.equal(merged, 2);
   const byTitle = Object.fromEntries(items.map((item) => [item.title, item]));
   assert.equal(items.length, 7);
-  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', notes: '', format: null, line: 'Steely Dan - Aja' });
+  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: null, notes: '', format: null });
   assert.equal(byTitle['Moving Pictures'].notes, 'Signed', 'numbering and other dashes are fine');
   assert.equal(byTitle['everyone for ten minutes'].notes, 'Electric Lady; 2 copies');
   assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', ''], 'a note that only names the format is dropped');

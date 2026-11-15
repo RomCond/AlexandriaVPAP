@@ -231,57 +231,68 @@
   const FORMAT_ONLY_NOTE = new RegExp(`^\\s*${FORMAT_WORD}(?:(?:\\s*[/,&+]\\s*|\\s+and\\s+|\\s+)${FORMAT_WORD})*\\s*$`, 'i');
 
   /*
-   * Reads a pasted list of records, one per line. Brackets at the end of a title become notes, like
-   * "(Signed)" or "(I have 2)", except deluxe or expanded editions, which stay in the title; "(Single)"
-   * or "(45)" also makes it a 45. Lines naming the same album become one record, since you keep one
-   * copy per album; their notes are combined, plus "2 copies" and so on.
-   * Returns { items: [{ artist, title, notes, format, line }], unreadable: [line], merged }, where
-   * merged counts the lines folded into an earlier one.
+   * One record from an import, or null without an artist and a title. Brackets at the end of a title
+   * become notes, like "(Signed)" or "(I have 2)", except deluxe or expanded editions, which stay in
+   * the title; "(Single)" or "(45)" also makes it a 45 unless a format is given.
    */
-  function parseRecordList(text) {
+  function readEntry({ artist, title, year = null, format = null, notes = '' }) {
+    const name = String(artist || '').trim();
+    let rest = String(title || '').trim();
+    const found = [];
+    let noteFormat = null;
+    let match;
+    while ((match = TRAILING_BRACKETS.exec(rest)) && match.index > 0) {
+      const note = match[1].trim();
+      if (DELUXE_WORDS.test(note)) break;
+      rest = rest.slice(0, match.index).trim();
+      if (note && !FORMAT_ONLY_NOTE.test(note)) found.unshift(note);
+      noteFormat = noteFormat || formatFromNote(note);
+    }
+    if (!name || !rest) return null;
+    return { artist: name, title: rest, year: parseYear(year), format: format || noteFormat, notes: notes ? [...found, notes] : found };
+  }
+
+  /*
+   * Entries naming the same album become one record, since you keep one copy per album. Their notes
+   * are combined, plus "2 copies" and so on. Returns { items: [{ artist, title, year, format, notes }],
+   * merged }, where merged counts the entries folded into an earlier one.
+   */
+  function foldRepeats(entries) {
     const byAlbum = new Map();
-    const unreadable = [];
     let merged = 0;
-    for (const raw of String(text || '').split(/\r?\n/)) {
-      const line = raw.replace(LIST_BULLET, '').trim();
-      if (!line) continue;
-      const at = line.search(LIST_SEPARATOR);
-      if (at <= 0) {
-        unreadable.push(raw.trim());
-        continue;
-      }
-      const artist = line.slice(0, at).trim();
-      let title = line.slice(at).replace(LIST_SEPARATOR, '').trim();
-      const notes = [];
-      let format = null;
-      let match;
-      while ((match = TRAILING_BRACKETS.exec(title)) && match.index > 0) {
-        const note = match[1].trim();
-        if (DELUXE_WORDS.test(note)) break;
-        title = title.slice(0, match.index).trim();
-        if (note && !FORMAT_ONLY_NOTE.test(note)) notes.unshift(note);
-        format = format || formatFromNote(note);
-      }
-      if (!title) {
-        unreadable.push(raw.trim());
-        continue;
-      }
-      const key = `${normArtist(artist)}|${normTitle(title)}|${DELUXE_WORDS.test(title) ? 'deluxe' : ''}`;
+    for (const entry of entries) {
+      const key = `${normArtist(entry.artist)}|${normTitle(entry.title)}|${DELUXE_WORDS.test(entry.title) ? 'deluxe' : ''}`;
       const item = byAlbum.get(key);
-      if (item) {
-        merged += 1;
-        item.copies += 1;
-        for (const note of notes) if (!item.notes.includes(note)) item.notes.push(note);
-        item.format = item.format || format;
-      } else {
-        byAlbum.set(key, { artist, title, notes, format, copies: 1, line: raw.trim() });
+      if (!item) {
+        byAlbum.set(key, { ...entry, notes: entry.notes.slice(), copies: 1 });
+        continue;
       }
+      merged += 1;
+      item.copies += 1;
+      for (const note of entry.notes) if (!item.notes.includes(note)) item.notes.push(note);
+      item.format = item.format || entry.format;
+      item.year = item.year || entry.year;
     }
     const items = [...byAlbum.values()].map(({ copies, notes, ...item }) => ({
       ...item,
       notes: [...notes, ...(copies > 1 ? [`${copies} copies`] : [])].join('; '),
     }));
-    return { items, unreadable, merged };
+    return { items, merged };
+  }
+
+  // Reads a pasted list of records, one per line. Returns { items, unreadable: [line], merged }.
+  function parseRecordList(text) {
+    const entries = [];
+    const unreadable = [];
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      const line = raw.replace(LIST_BULLET, '').trim();
+      if (!line) continue;
+      const at = line.search(LIST_SEPARATOR);
+      const entry = at > 0 && readEntry({ artist: line.slice(0, at), title: line.slice(at).replace(LIST_SEPARATOR, '') });
+      if (entry) entries.push(entry);
+      else unreadable.push(raw.trim());
+    }
+    return { ...foldRepeats(entries), unreadable };
   }
 
   // How alike two strings are, from 0 to 1: one minus the edit distance over the longer length.
