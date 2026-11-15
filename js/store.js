@@ -99,6 +99,8 @@
       // Imported records wait for a MusicBrainz lookup to fill in covers and years.
       pendingLookup: Boolean(input.pendingLookup),
       addedAt: input.addedAt || new Date().toISOString(),
+      // When this copy last changed, so two devices can tell which copy of a record is newer.
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -603,11 +605,12 @@
       // Remembers which MusicBrainz artist a hand-typed artist name refers to.
       linkArtist(name, artistId) {
         const key = normArtist(name);
+        const updatedAt = new Date().toISOString();
         let changed = 0;
         records = records.map((record) => {
           if (record.artistId || normArtist(record.artist) !== key) return record;
           changed++;
-          return { ...record, artistId };
+          return { ...record, artistId, updatedAt };
         });
         if (changed) commit();
         return changed;
@@ -642,6 +645,8 @@
               skipped++;
               continue;
             }
+            // Keep the backup's change time. Backups from before change times count from when the record was added.
+            record.updatedAt = typeof item.updatedAt === 'string' ? item.updatedAt : record.addedAt;
             if (ids.has(record.id) || into.some((r) => sameAlbum(r, record)) || alsoSkip.some((r) => sameAlbum(r, record))) {
               skipped++;
               continue;

@@ -177,6 +177,45 @@ test('backups round trip and do not create duplicates', () => {
   assert.throws(() => target.importJSON('{"hello": 1}'), /look like/);
 });
 
+test('records remember when they last changed', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const record = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  assert.equal(record.updatedAt, '2026-01-01T00:00:00.000Z');
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  store.update(record.id, { notes: 'Signed' });
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  const saved = S.createStore(storage).get(record.id);
+  assert.equal(saved.updatedAt, '2026-02-01T00:00:00.000Z');
+  assert.equal(saved.addedAt, '2026-01-01T00:00:00.000Z');
+
+  store.linkArtist('Steely Dan', 'sd');
+  assert.equal(store.get(record.id).updatedAt, '2026-03-01T00:00:00.000Z');
+
+  t.mock.timers.setTime(Date.parse('2026-04-01T00:00:00Z'));
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Ege Bamyasi' });
+  t.mock.timers.setTime(Date.parse('2026-05-01T00:00:00Z'));
+  store.removeFromWishlist(wish.id);
+  const got = store.add({ ...wish, id: null, addedAt: null });
+  assert.equal(got.updatedAt, '2026-05-01T00:00:00.000Z', 'a wish you got counts as changed when you got it');
+});
+
+test('backups keep the time each record last changed', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const source = S.createStore(S.memoryStorage());
+  source.add({ artist: 'Steely Dan', title: 'Aja' });
+
+  t.mock.timers.setTime(Date.parse('2026-06-01T00:00:00Z'));
+  const target = S.createStore(S.memoryStorage());
+  target.importJSON(source.exportJSON());
+  target.importJSON(JSON.stringify([{ artist: 'Can', title: 'Tago Mago', addedAt: '2020-05-05T00:00:00.000Z' }]));
+  const byTitle = Object.fromEntries(target.all().map((r) => [r.title, r.updatedAt]));
+  assert.equal(byTitle.Aja, '2026-01-01T00:00:00.000Z');
+  assert.equal(byTitle['Tago Mago'], '2020-05-05T00:00:00.000Z', 'an older backup counts from when the record was added');
+});
+
 test('unreadable saved data is set aside instead of overwritten', () => {
   const storage = S.memoryStorage();
   storage.setItem(S.KEYS.records, '{oops');
