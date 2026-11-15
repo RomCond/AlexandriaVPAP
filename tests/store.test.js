@@ -173,7 +173,7 @@ test('backups round trip and do not create duplicates', () => {
   assert.deepEqual(restore(target, backup), { added: 2, skipped: 0, wishes: 0 });
   assert.deepEqual(restore(target, backup), { added: 0, skipped: 2, wishes: 0 });
   assert.equal(target.all()[0].format, 'Double LP');
-  assert.deepEqual(restore(target, JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }])), { added: 1, skipped: 1, wishes: 0 });
+  assert.deepEqual(restore(target, JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }, { artist: 'low', title: 'things we lost in the fire' }])), { added: 1, skipped: 2, wishes: 0 });
   // A backup from another device skips albums you already have, even with different ids
   assert.deepEqual(restore(target, JSON.stringify([{ id: 'other-device', artist: 'portishead', title: 'Dummy' }])), { added: 0, skipped: 1, wishes: 0 });
   assert.throws(() => restore(target, '{"records": [}'), /valid backup/);
@@ -431,14 +431,63 @@ test('addMany adds several records at once and removeMany takes them back', () =
     { artist: 'Rush', title: '2112', pendingLookup: true },
     { artist: 'Rush', title: 'Moving Pictures', pendingLookup: true },
     { artist: '', title: 'No artist' },
+    { artist: 'rush', title: 'moving pictures' },
   ]);
   assert.equal(added.length, 2);
-  assert.equal(skipped.length, 2);
+  assert.equal(skipped.length, 3, 'including a second copy of an album added a moment ago');
   assert.equal(changes, 1, 'one save for the lot');
   assert.equal(store.wishlist().length, 0, 'owning it takes it off the wishlist');
   assert.equal(store.get(added[0].id).pendingLookup, true);
   store.removeMany(added.map((record) => record.id));
   assert.deepEqual(store.all().map((record) => record.title), ['Aja']);
+});
+
+test('notInCollection keeps the albums you do not have yet, by the same rules as findCopy', () => {
+  const store = S.createStore(S.memoryStorage());
+  store.add({ artist: 'Radiohead', title: 'OK Computer', releaseGroupId: 'rg-okc' });
+  store.add({ artist: 'Weezer', title: 'Weezer' });
+  store.add({ artist: 'Bleachers', title: 'Strange Desire', releaseGroupId: 'rg-strange' });
+  store.add({ artist: 'Weezer', title: 'Pinkerton (Deluxe Edition)' });
+  const inputs = [
+    { artist: 'radiohead', title: 'ok computer' },
+    { artist: 'Radiohead', title: 'OKC', releaseGroupId: 'rg-okc' },
+    { artist: 'Weezer', title: 'Weezer', releaseGroupId: 'rg-blue' },
+    { artist: 'Bleachers', title: 'Strange Desire', releaseGroupId: 'rg-other' },
+    { artist: 'Weezer', title: 'Pinkerton' },
+    { artist: 'The Weezer', title: 'Pinkerton (Deluxe)' },
+    { artist: 'Bleachers', title: 'Strange Desire (Deluxe)', releaseGroupId: 'rg-strange' },
+  ];
+  const fresh = store.notInCollection(inputs);
+  assert.deepEqual(fresh.map((input) => input.title), ['Strange Desire', 'Pinkerton', 'Strange Desire (Deluxe)'],
+    'a typed name matches a linked record, release groups decide between linked ones, and editions never match');
+  assert.deepEqual(fresh, inputs.filter((input) => !store.findCopy(input)));
+});
+
+test('checking 1,000 imported records against 1,000 owned ones stays fast', (t) => {
+  const collection = () => {
+    const store = S.createStore(S.memoryStorage());
+    store.addMany(Array.from({ length: 1000 }, (_, i) => ({ artist: `Owned ${i}`, title: `Album ${i}`, releaseGroupId: i % 2 ? `rg-${i}` : null })));
+    return store;
+  };
+  const inputs = Array.from({ length: 1000 }, (_, i) => (i % 10 ? { artist: `New ${i}`, title: `Album ${i}` } : { artist: `owned ${i}`, title: `album ${i}` }));
+  const source = S.createStore(S.memoryStorage());
+  source.addMany(inputs);
+  const backup = S.readImport(source.exportJSON());
+  const timed = (run) => {
+    const store = collection();
+    const start = process.hrtime.bigint();
+    const result = run(store);
+    return [result, Number(process.hrtime.bigint() - start) / 1e6];
+  };
+
+  const [fresh, preview] = timed((store) => store.notInCollection(inputs));
+  const [{ added }, adding] = timed((store) => store.addMany(inputs));
+  const [merged, merging] = timed((store) => store.importBackup(backup));
+  t.diagnostic(`notInCollection ${preview.toFixed(1)} ms, addMany ${adding.toFixed(1)} ms, importBackup ${merging.toFixed(1)} ms`);
+  assert.deepEqual([fresh.length, added.length, merged.added], [900, 900, 900]);
+  for (const [name, took] of [['notInCollection', preview], ['addMany', adding], ['importBackup', merging]]) {
+    assert.ok(took < 250, `${name} took ${took.toFixed(0)} ms, where comparing every pair took over a second`);
+  }
 });
 
 test('changing the artist name drops the old MusicBrainz artist link', () => {

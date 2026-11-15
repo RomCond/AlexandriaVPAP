@@ -1027,7 +1027,7 @@
     }
 
     const unit = read.kind === 'table' ? 'row' : 'line';
-    const items = read.items.filter((item) => !store.findCopy(item));
+    const items = store.notInCollection(read.items);
     const owned = read.items.length - items.length;
     const notes = [];
     if (read.kind === 'table') notes.push(`Read the ${columnNames(read.columns)}${read.ignored.length ? ` and left out the ${columnNames(read.ignored)}` : ''}.`);
@@ -1082,12 +1082,14 @@
   function importRecords(items) {
     const format = $('#import-format').value;
     const inputs = items.map((item) => ({ ...item, format: item.format || format, pendingLookup: true }));
-    const wishes = inputs.map((input) => store.findWish(input)).filter(Boolean);
+    const wishesBefore = store.wishlist();
     const { added } = store.addMany(inputs);
     if (!added.length) {
       toast('Those records are already in your collection.');
       return;
     }
+    const kept = new Set(store.wishlist().map((wish) => wish.id));
+    const wishes = wishesBefore.filter((wish) => !kept.has(wish.id)); // ticked off by this import, put back by Undo
     // The lookups may have started already, from the change to the collection, and listed some.
     for (const record of added) if (!lookupSession.ids.includes(record.id)) lookupSession.ids.push(record.id);
     saveLookupSession();

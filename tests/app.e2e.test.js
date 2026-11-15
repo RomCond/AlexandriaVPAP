@@ -624,13 +624,20 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     await page.reload();
     assert.ok(await page.locator('#lookup').isHidden());
 
-    // Undo takes the whole import back
+    // Undo takes the whole import back, and puts back the wishes it ticked off
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
+    });
+    await page.reload();
+    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.wishlist.v1')).map((w) => w.title));
     await page.click('#import-btn');
     await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
     await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 2 records' }).waitFor();
+    assert.deepEqual(await wishes(), [], 'owning Third takes it off the wishlist');
     await page.click('#toast .toast-action');
     assert.equal(await text(page, '#nav-count'), '5');
+    assert.deepEqual(await wishes(), ['Third']);
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');

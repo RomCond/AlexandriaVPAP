@@ -156,6 +156,37 @@
     return normArtist(a.artist) === normArtist(b.artist) && normTitle(a.title) === normTitle(b.title);
   }
 
+  // sameAlbum's two ways of matching as keys: by release group, or by artist and title.
+  const editionOf = (record) => (DELUXE_WORDS.test(record.title) ? 'deluxe' : 'original');
+  const groupKey = (record) => `${record.releaseGroupId}|${editionOf(record)}`;
+  const nameKey = (record) => `${normArtist(record.artist)}|${normTitle(record.title)}|${editionOf(record)}`;
+
+  /*
+   * Finds the record for the same album by sameAlbum's rules, working out each record's keys once, so
+   * checking a long import against a big collection doesn't compare every pair.
+   */
+  function albumIndex(records) {
+    const byGroup = new Map();
+    const byName = new Map();
+    const add = (record) => {
+      const group = record.releaseGroupId && groupKey(record);
+      if (group && !byGroup.has(group)) byGroup.set(group, record);
+      const name = nameKey(record);
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(record);
+    };
+    records.forEach(add);
+    return {
+      add,
+      // Two linked records match only by release group, so a linked input matches by name only records typed in by hand.
+      find(input) {
+        const linked = input.releaseGroupId && byGroup.get(groupKey(input));
+        if (linked) return linked;
+        return (byName.get(nameKey(input)) || []).find((record) => !input.releaseGroupId || !record.releaseGroupId) || null;
+      },
+    };
+  }
+
   function isDeluxeRecord(record, group) {
     if (!group.deluxe) return false;
     if (record.releaseId && group.deluxe.releaseIds.includes(record.releaseId)) return true;
@@ -628,7 +659,9 @@
 
     // Getting a record ticks it off the wishlist.
     function dropWishesYouOwn() {
-      wishes = wishes.filter((wish) => !records.some((record) => sameAlbum(record, wish)));
+      if (!wishes.length) return;
+      const owned = albumIndex(records);
+      wishes = wishes.filter((wish) => !owned.find(wish));
     }
 
     function find(id) {
@@ -644,6 +677,12 @@
       // The record you already have for this album, if any.
       findCopy(input) {
         return records.find((record) => sameAlbum(record, input)) || null;
+      },
+
+      // The inputs whose album isn't in your collection yet.
+      notInCollection(inputs) {
+        const owned = albumIndex(records);
+        return inputs.filter((input) => !owned.find(input));
       },
 
       add(input) {
@@ -722,6 +761,8 @@
 
       // Adds several records at once, skipping albums you already have. Returns { added, skipped }.
       addMany(inputs) {
+        const owned = albumIndex(records);
+        const ids = new Set(records.map((record) => record.id));
         const added = [];
         const skipped = [];
         for (const input of inputs) {
@@ -732,11 +773,13 @@
             skipped.push(input);
             continue;
           }
-          if (records.some((r) => sameAlbum(r, record))) {
+          if (owned.find(record)) {
             skipped.push(input);
             continue;
           }
-          if (find(record.id)) record.id = newId();
+          if (ids.has(record.id)) record.id = newId();
+          ids.add(record.id);
+          owned.add(record);
           records.push(record);
           added.push(record);
         }
@@ -787,6 +830,7 @@
         const merge = (items, into, alsoSkip = []) => {
           let count = 0;
           let skipped = 0;
+          const known = albumIndex([...into, ...alsoSkip]);
           for (const item of items) {
             let record;
             try {
@@ -795,12 +839,13 @@
               skipped++;
               continue;
             }
-            if (ids.has(record.id) || into.some((r) => sameAlbum(r, record)) || alsoSkip.some((r) => sameAlbum(r, record))) {
+            if (ids.has(record.id) || known.find(record)) {
               skipped++;
               continue;
             }
             ids.add(record.id);
             into.push(record);
+            known.add(record);
             count++;
           }
           return { count, skipped };
