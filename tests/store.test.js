@@ -179,10 +179,10 @@ test('a cover color goes with a new cover, and backups carry it', () => {
   assert.equal(store.update(record.id, { notes: 'First pressing' }).coverColor, 'rgb(12 34 56)');
 
   const copy = S.createStore(S.memoryStorage());
-  copy.importJSON(store.exportJSON());
+  restore(copy, store.exportJSON());
   assert.equal(copy.all()[0].coverColor, 'rgb(12 34 56)');
   // Backups made before colors were saved still load
-  copy.importJSON(JSON.stringify([{ artist: 'Portishead', title: 'Dummy' }]));
+  restore(copy, JSON.stringify([{ artist: 'Portishead', title: 'Dummy' }]));
   assert.equal(copy.all()[1].coverColor, null);
 
   assert.equal(store.update(record.id, { releaseGroupId: 'rg-kida-deluxe' }).coverColor, null, 'the old color belongs to the old cover');
