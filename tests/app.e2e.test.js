@@ -660,6 +660,16 @@ test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting
       await page.mouse.move(500, 500);
       assert.deepEqual(await spinState(), ['paused', 'paused']);
 
+      // The empty shelf and the empty wishlist draw the header's record, whole
+      for (const view of ['collection', 'wishlist']) {
+        if (view === 'wishlist') await openTab(page, 'wishlist');
+        const emptyRecord = await page.locator(`#${view}-empty .empty-logo use`).evaluate((use) => ({
+          isHeaderLogo: !!document.querySelector(use.getAttribute('href'))?.closest('.brand'),
+          width: Math.round(use.getBBox().width),
+        }));
+        assert.deepEqual(emptyRecord, { isHeaderLogo: true, width: 60 }, `${view} (${colorScheme})`);
+      }
+
       assert.deepEqual(errors, []);
       await context.close();
     }
