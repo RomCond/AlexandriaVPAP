@@ -22,7 +22,7 @@ The answers to iteration 1's questions:
 - Tapping it opens the artist's page in the Discography tab.
 - The row shows even when the text is also an album title.
 - Toggles are dropped.
-- `cache.json.gz` stays on this branch and is dropped before anything merges to main.
+- `cache.json.gz` was taken out before merging. It is still in commit `fcc18ea`. To rescore offline, restore it with `git checkout fcc18ea -- docs/investigations/add-search/cache.json.gz`.
 
 What's on the branch now:
 
@@ -505,4 +505,4 @@ The approaches run on the app's search code as it was before this work (commit `
 | `report.js` | Prints the tables in this page. |
 | `results.json`, `results-holdout.json` | Scores and the top 5 for each approach and query. |
 | `results-small.json`, `results-holdout-small.json` | The same for smart and smart+found-artist with 45s and 10" records on. |
-| `cache.json.gz` | The saved replies, trimmed to the fields the app reads. |
+| `cache.json.gz` | The saved replies, trimmed to the fields the app reads. Taken out before merging. Restore it from commit `fcc18ea`. |
