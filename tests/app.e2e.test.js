@@ -629,6 +629,9 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
   }
 });
 
+// The discography asks for an artist by id, either as a browse parameter or inside a search query.
+const asksForArtist = (url, id) => url.searchParams.get('artist') === id || (url.searchParams.get('query') || '').includes(`arid:"${id}"`);
+
 test('a search for an artist opens their discography in one tap', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
@@ -649,7 +652,7 @@ test('a search for an artist opens their discography in one tap', { skip: !chrom
     await row.getByRole('button', { name: /See all albums/ }).click();
     await page.locator('#disco-name', { hasText: 'Radiohead' }).waitFor();
     assert.equal(await page.evaluate(() => location.hash), '#discography');
-    assert.ok(mbCalls.some((url) => url.pathname === '/ws/2/release-group' && url.searchParams.get('artist') === 'a-radiohead'), 'it loads the artist by their MusicBrainz id');
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-radiohead')), 'it loads the artist by their MusicBrainz id');
     assert.match(await text(page, '#disco-missing'), /OK Computer/);
 
     // An artist MusicBrainz files under another name shows as the sleeve credits them, and still
@@ -660,7 +663,7 @@ test('a search for an artist opens their discography in one tap', { skip: !chrom
     assert.equal(await row.innerText(), 'Masayoshi Takanaka · Artist · See all albums');
     await row.getByRole('button').click();
     await page.locator('#disco-name', { hasText: 'Masayoshi Takanaka' }).waitFor();
-    assert.ok(mbCalls.some((url) => url.pathname === '/ws/2/release-group' && url.searchParams.get('artist') === 'a-takanaka'), 'it loads 高中正義 by id');
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-takanaka')), 'it loads 高中正義 by id');
     assert.match(await text(page, '#disco-missing'), /Seychelles/);
 
     // A barcode names no artist, so the row goes away
