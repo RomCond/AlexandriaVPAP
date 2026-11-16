@@ -1,0 +1,61 @@
+# measure-archive.sh, 2026-11-15, from a cloud container through its egress proxy.
+# Pass 1, cold: every hop on a new connection. Proxy resets cut two chains (e404b349 in run 1 after 250px, d2f48ef0 at 250px). e404b349 was rerun, so its 250px appears twice.
+cover	size	hop	host	code	http	setup_ms	ttfb_ms	total_ms	bytes	cache_control	expires	last_modified	etag	acao
+b1392450	250	1	coverartarchive.org	307	h2	453	576	576	143					*
+b1392450	250	2	archive.org	302	h2	389	517	517	0					*
+b1392450	250	3	dn720706.ca.archive.org	200	h2	233	658	660	41268			Tue, 14 Oct 2025 04:17:42 GMT	"68edcee6-a134"	*
+b1392450	500	1	coverartarchive.org	307	h2	261	617	618	143					*
+b1392450	500	2	archive.org	302	h2	186	309	309	0					*
+b1392450	500	3	dn720706.ca.archive.org	200	h2	211	585	964	85302			Tue, 14 Oct 2025 04:17:51 GMT	"68edceef-14d36"	*
+b1392450	1200	1	coverartarchive.org	307	h2	256	393	393	144					*
+b1392450	1200	2	archive.org	302	h2	194	321	321	0					*
+b1392450	1200	3	dn720706.ca.archive.org	200	h2	236	431	658	268304			Tue, 14 Oct 2025 04:18:01 GMT	"68edcef9-41810"	*
+e75c0549	250	1	coverartarchive.org	307	h2	259	396	396	143					*
+e75c0549	250	2	archive.org	302	h2	202	337	338	0					*
+e75c0549	250	3	dn710905.ca.archive.org	200	h2	228	424	468	29967			Sat, 29 May 2021 09:18:00 GMT	"60b206c8-750f"	*
+e75c0549	500	1	coverartarchive.org	307	h2	259	395	395	143					*
+e75c0549	500	2	archive.org	302	h2	188	310	310	0					*
+e75c0549	500	3	dn710905.ca.archive.org	200	h2	209	542	619	91925			Sat, 29 May 2021 09:18:07 GMT	"60b206cf-16715"	*
+e75c0549	1200	1	coverartarchive.org	307	h2	260	420	420	144					*
+e75c0549	1200	2	archive.org	302	h2	189	307	307	0					*
+e75c0549	1200	3	dn710905.ca.archive.org	200	h2	247	529	758	348178			Sat, 29 May 2021 09:18:13 GMT	"60b206d5-55012"	*
+80975c59	250	1	coverartarchive.org	307	h2	258	391	391	143					*
+80975c59	250	2	archive.org	302	h2	234	376	376	0					*
+80975c59	250	3	dn721706.ca.archive.org	200	h2	298	700	700	22901			Tue, 22 Apr 2025 21:45:19 GMT	"68080def-5975"	*
+80975c59	500	1	coverartarchive.org	307	h2	257	434	434	143					*
+80975c59	500	2	archive.org	302	h2	190	312	312	0					*
+80975c59	500	3	ia801403.us.archive.org	200	h2	269	365	492	48488	max-age=21600	Mon, 16 Nov 2026 02:46:01 GMT	Tue, 22 Apr 2025 21:45:22 GMT	"68080df2-bd68"	*
+80975c59	1200	1	coverartarchive.org	307	h2	266	424	424	144					*
+80975c59	1200	2	archive.org	302	h2	380	542	542	0					*
+80975c59	1200	3	dn721706.ca.archive.org	200	h2	251	444	646	194721			Tue, 22 Apr 2025 21:45:26 GMT	"68080df6-2f8a1"	*
+e404b349	250	1	coverartarchive.org	307	h2	257	381	381	143					*
+e404b349	250	2	archive.org	302	h2	193	315	315	0					*
+e404b349	250	3	ia600601.us.archive.org	200	h2	261	355	434	28274	max-age=21600	Mon, 16 Nov 2026 02:46:06 GMT	Fri, 16 Apr 2021 19:17:40 GMT	"6079e2d4-6e72"	*
+e404b349	250	1	coverartarchive.org	307	h2	467	631	631	143					*
+e404b349	250	2	archive.org	302	h2	398	521	521	0					*
+e404b349	250	3	dn710800.ca.archive.org	200	h2	288	580	580	28274			Fri, 16 Apr 2021 19:17:40 GMT	"6079e2d4-6e72"	*
+e404b349	500	1	coverartarchive.org	307	h2	359	504	504	143					*
+e404b349	500	2	archive.org	302	h2	306	611	611	0					*
+e404b349	500	3	dn710800.ca.archive.org	200	h2	199	382	493	90093			Fri, 16 Apr 2021 19:17:41 GMT	"6079e2d5-15fed"	*
+e404b349	1200	1	coverartarchive.org	307	h2	273	421	421	144					*
+e404b349	1200	2	archive.org	302	h2	185	720	720	0					*
+e404b349	1200	3	dn710800.ca.archive.org	200	h2	415	820	1026	265464			Fri, 16 Apr 2021 19:17:41 GMT	"6079e2d5-40cf8"	*
+d2f48ef0	500	1	coverartarchive.org	307	h2	340	470	470	143					*
+d2f48ef0	500	2	archive.org	302	h2	403	642	642	0					*
+d2f48ef0	500	3	dn710803.ca.archive.org	200	h2	321	731	798	42117			Mon, 06 May 2019 04:41:45 GMT	"5ccfbb09-a485"	*
+d2f48ef0	1200	1	coverartarchive.org	307	h2	302	464	464	144					*
+d2f48ef0	1200	2	archive.org	302	h2	183	328	328	0					*
+d2f48ef0	1200	3	dn710803.ca.archive.org	200	h2	227	650	719	67315			Mon, 06 May 2019 04:41:45 GMT	"5ccfbb09-106f3"	*
+
+# Pass 2, warm: one curl, connections reused, chains in this order. Labels added by position (the first version of the script printed the last label on every line).
+cover	size	redirects	redirect_ms	total_ms	bytes	final_host
+b1392450	500	2	755	1499	85302	dn720706.ca.archive.org
+b1392450	1200	2	294	622	268304	dn720706.ca.archive.org
+e75c0549	500	2	243	1040	91925	dn710905.ca.archive.org
+e75c0549	1200	2	240	563	348178	dn710905.ca.archive.org
+80975c59	500	2	433	1407	48488	dn721706.ca.archive.org
+80975c59	1200	2	246	614	194721	dn721706.ca.archive.org
+e404b349	500	2	274	1040	90093	ia800601.us.archive.org
+e404b349	1200	2	376	977	265464	dn710800.ca.archive.org
+d2f48ef0	500	2	270	688	42117	ia600709.us.archive.org
+d2f48ef0	1200	2	294	944	67315	dn710803.ca.archive.org

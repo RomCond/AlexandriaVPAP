@@ -399,12 +399,17 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').classList.contains('has-album'));
     assert.match(await albumTint(), /^hsl\(/);
     await page.selectOption('#random-artist', '');
-    // Kid A is the only Double LP, and it has a cover: the big pick uses the 1200px version
+    // Kid A is the only Double LP, and it has a cover. The list above already loaded its 500px cover,
+    // so the pick shows that at once without asking for it again, then lays the 1200px cover over it.
     await page.selectOption('#random-format', 'Double LP');
+    const kidA500 = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-500')).length;
+    const kidA500Before = kidA500();
+    assert.ok(kidA500Before > 0, 'the list loaded the 500px cover');
     await page.click('#spin-btn');
     assert.equal(await text(page, '.pick-title'), 'Kid A');
-    await page.locator('#spin-sleeve .cover.loaded').waitFor();
-    assert.ok(coverCalls.some((url) => url.endsWith('/rg-kida/front-1200')));
+    assert.equal(await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-500"]').count(), 1, 'the 500px cover shows at once');
+    await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-1200"]').waitFor();
+    assert.equal(kidA500(), kidA500Before, 'the 500px cover came from memory');
     // Kid A has a cover, so the card fades down from the cover's main color
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
     const [r, g, b] = (await albumTint()).match(/\d+/g).map(Number);
@@ -555,7 +560,15 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     assert.ok(await page.locator('#collection-empty').isVisible());
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'the empty shelf shows one Import button');
+    await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
+    await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), path.basename(backupPath), 'the backup shows by name, not as JSON');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');
+    assert.equal(await text(page, '#import-submit'), 'Import backup');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
@@ -615,6 +628,69 @@ test('a search for an artist opens their discography in one tap', { skip: !chrom
   }
 });
 
+test('the random pick shows the 500px cover while the 1200px one loads', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, coverCalls } = await openApp(browser);
+    // Kid A's 1200px cover is slow to arrive, and OK Computer has no 1200px cover at all.
+    await context.route(/\/front-1200$/, async (route) => {
+      if (route.request().url().includes('/rg-okc/')) return route.fulfill({ status: 404, body: '' });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return route.fallback();
+    });
+    await page.evaluate(() => {
+      const record = (id, title, format) => ({ id, artist: 'Radiohead', title, year: 2000, format, releaseGroupId: `rg-${id}`, notes: '', addedAt: new Date(2024, 0, 1).toISOString() });
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
+    });
+    await page.goto(`${PAGE_URL}#random`);
+    await page.reload();
+    const shown = () => page.locator('#spin-sleeve img.shown').evaluateAll((imgs) => imgs.map((img) => img.src.split('/').pop()));
+
+    // Opened straight on Random, so nothing has loaded Kid A's cover yet, and its color hasn't been
+    // read. Only the 1200px cover is asked for, so it doesn't share the connection with two others.
+    const calls = (size) => coverCalls.filter((url) => url.endsWith(`/rg-kida/front-${size}`)).length;
+    assert.ok(!coverCalls.some((url) => url.includes('/rg-kida/')));
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-1200']);
+    assert.equal(calls(500), 0);
+
+    // The cover's main color is kept with the record. After a reload the card takes it at once,
+    // without reading the cover again.
+    const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
+    await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    assert.equal(saved, await tint());
+    await page.reload();
+    const colorReads = calls(250);
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    assert.equal(await tint(), saved);
+    assert.equal(calls(250), colorReads, 'no second read of the cover');
+
+    // With no color to read, both sizes are asked for. The 500px one shows first, and the 1200px
+    // one goes on top when it arrives.
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
+    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
+    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+
+    // Without a 1200px cover, the 500px one takes its place
+    await page.selectOption('#random-format', 'LP');
+    await page.click('#spin-btn');
+    assert.equal(await text(page, '.pick-title'), 'OK Computer');
+    await page.waitForFunction(() => document.querySelectorAll('#spin-sleeve img').length === 1);
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500']);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
 test('imports a typed list and looks the records up', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
@@ -629,9 +705,9 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
     const byTitle = async () => Object.fromEntries((await records()).map((r) => [r.title, r]));
 
-    await page.click('#list-import-tools');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'list-heading', 'the list box waits for a tap');
-    await page.fill('#list-form [name=list]', [
+    await page.click('#import-btn');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'import-heading', 'the list box waits for a tap');
+    await page.fill('#import-form [name=text]', [
       'Radiohead - The Bends',
       'Portishead - Dumy (Signed)',
       'Radiohed - Kid A',
@@ -640,14 +716,14 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
       'Weezer - Weezer',
       'a line with no dash',
     ].join('\n'));
-    const summary = await text(page, '#list-summary');
+    const summary = await text(page, '#import-summary');
     assert.match(summary, /4 records to add/);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 line named an album already on the list/);
     assert.match(summary, /1 line couldn't be read[\s\S]*a line with no dash/);
-    assert.equal(await text(page, '#list-submit'), 'Add 4 records');
+    assert.equal(await text(page, '#import-submit'), 'Add 4 records');
     await shot(page, 'import-01-dialog');
-    await page.click('#list-submit');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 4 records' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '5');
 
@@ -681,16 +757,106 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     await page.reload();
     assert.ok(await page.locator('#lookup').isHidden());
 
-    // Undo takes the whole import back
-    await page.click('#list-import-tools');
-    await page.fill('#list-form [name=list]', 'Portishead - Third\nPortishead - Portishead');
-    await page.click('#list-submit');
+    // Undo takes the whole import back, and puts back the wishes it ticked off
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
+    });
+    await page.reload();
+    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.wishlist.v1')).map((w) => w.title));
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 2 records' }).waitFor();
+    assert.deepEqual(await wishes(), [], 'owning Third takes it off the wishlist');
     await page.click('#toast .toast-action');
     assert.equal(await text(page, '#nav-count'), '5');
+    assert.deepEqual(await wishes(), ['Third']);
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('imports spreadsheets saved as Excel or CSV, and says what to do with a Numbers file', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+        id: 'dummy', artist: 'Portishead', artistId: 'a-portishead', title: 'Dummy', year: 1994, releaseGroupId: 'rg-dummy',
+        format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
+      }]));
+    });
+    await page.reload();
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Steely Dan - Aja');
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records.numbers'));
+    await page.locator('#import-summary', { hasText: "can't read Numbers or old Excel (.xls) files" }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.numbers', 'the file shows by name in place of the paste box');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-submit').isDisabled());
+    await page.click('#import-paste-btn');
+    assert.ok(await page.locator('#import-chosen').isHidden());
+    assert.equal(await page.inputValue('#import-form [name=text]'), 'Steely Dan - Aja', 'Paste instead brings back what was pasted');
+    await page.locator('#import-summary', { hasText: '1 record to add.' }).waitFor();
+
+    // An .xlsx file, unzipped by the browser itself
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records-xlsxwriter.xlsx'));
+    await page.locator('#import-summary', { hasText: '5 records to add.' }).waitFor();
+    assert.match(await text(page, '#import-summary'), /Read the Artist, Album, Year, Format, Label and Notes columns\.[\s\S]*1 row is a CD or cassette/);
+    await shot(page, 'import-05-excel');
+
+    // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
+    const csv = [
+      'Artist,Album,Year,Format,Label,Price',
+      'Portishead,Dummy,1994,LP,Go! Beat',
+      '"Crosby, Stills & Nash",Crosby Stills & Nash,1969,LP,Atlantic',
+      'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
+      'Björk,Homogenic,1997-09-22,,One Little Indian',
+      ',Didn’t Say,1999,LP,',
+      'Prince,Purple Rain,1984,Cassette,Warner Bros.',
+    ].join('\r\n');
+    const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
+    await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
+    await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.csv');
+    const summary = await text(page, '#import-summary');
+    assert.match(summary, /Read the Artist, Album, Year, Format and Label columns and left out the Price column\./);
+    assert.match(summary, /1 record already in your collection is skipped/);
+    assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
+    assert.match(summary, /1 row is a CD or cassette, so it's left out\.[\s\S]*Prince, Purple Rain, 1984, Cassette, Warner Bros\./);
+    assert.ok(await page.locator('#import-format-field').isVisible());
+    await page.selectOption('#import-format', 'Double LP');
+    await shot(page, 'import-04-spreadsheet');
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 3 records' }).waitFor();
+    assert.equal(await text(page, '#nav-count'), '4');
+
+    const added = Object.fromEntries((await records()).map((r) => [r.title, [r.artist, r.year, r.format, r.notes]]));
+    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', 'Label: Atlantic']);
+    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed; Label: Bronze'], 'the umlaut survives and 7" is a 45');
+    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', 'Label: One Little Indian'], 'no format in the file, so Add as decides');
+    await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
+
+    // A Discogs collection export, pasted. Its columns are from memory and other parsers, not a real export.
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', [
+      'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+      'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,Very Good Plus (VG+),,',
+    ].join('\n'));
+    assert.match(await text(page, '#import-summary'), /1 record to add\.[\s\S]*Collection Notes columns of this Discogs export and left out the Rating, release_id, CollectionFolder and Date Added columns\./);
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 1 record' }).waitFor();
+    const nevermind = (await records()).find((r) => r.title === 'Nevermind');
+    assert.deepEqual([nevermind.artist, nevermind.year, nevermind.notes], ['Nirvana', null, 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991; Media condition: VG+']);
+
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

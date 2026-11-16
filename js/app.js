@@ -57,22 +57,27 @@
 
   // The main color of a cover, for tinting the screen behind it. A small copy is drawn to a canvas
   // and sampled, which needs the image server to allow cross-origin reads. When it doesn't, or there's
-  // no cover, this falls back to the record's placeholder color.
+  // no cover, this falls back to the record's placeholder color. A color read from a cover is kept
+  // with the record, so the next time it shows at once, without downloading anything.
   const albumColors = new Map();
 
   function albumColor(item) {
     const fallback = labelColor(item);
     if (!item.releaseGroupId) return Promise.resolve(fallback);
+    if (item.coverColor) return Promise.resolve(item.coverColor);
     if (!albumColors.has(item.releaseGroupId)) {
       albumColors.set(item.releaseGroupId, new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          let color = null;
           try {
-            resolve(mainColor(img) || fallback);
+            color = mainColor(img);
           } catch (e) {
-            resolve(fallback); // the browser refused to read the pixels
+            // the browser refused to read the pixels
           }
+          if (color) store.setCoverColor(item.id, color);
+          resolve(color || fallback);
         };
         img.onerror = () => resolve(fallback);
         img.src = mb.coverUrl(item.releaseGroupId, 250);
@@ -130,7 +135,7 @@
   }
 
   // Cover Art Archive sizes in pixels, about 3x the size shown so covers stay sharp on phone screens.
-  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [1200, 500] };
+  const COVER_SIZES = { sm: 500, md: 500, grid: 500, lg: 1200 };
   // Covers that have loaded once show straight away when a list is drawn again, instead of fading in.
   const loadedCovers = new Set();
 
@@ -144,21 +149,36 @@
     placeholder.style.setProperty('--label', labelColor(item));
     box.append(placeholder);
     if (item.releaseGroupId) {
-      const sizes = COVER_SIZES[size];
-      let attempt = 0;
-      const img = h('img', { src: mb.coverUrl(item.releaseGroupId, sizes[0]), alt: '', loading: 'lazy', decoding: 'async' });
-      if (loadedCovers.has(img.src)) box.classList.add('loaded');
-      img.addEventListener('load', () => {
-        loadedCovers.add(img.src);
-        box.classList.add('loaded');
-      });
-      // Try the next size down if the big one isn't there, then leave the placeholder showing.
-      img.addEventListener('error', () => {
-        attempt += 1;
-        if (attempt < sizes.length) img.src = mb.coverUrl(item.releaseGroupId, sizes[attempt]);
-        else img.remove();
-      });
-      box.append(img);
+      const url = (px) => mb.coverUrl(item.releaseGroupId, px);
+      const add = (px, fallback) => {
+        const img = h('img', { src: url(px), alt: '', loading: 'lazy', decoding: 'async' });
+        const show = () => {
+          img.classList.add('shown');
+          box.classList.add('loaded');
+        };
+        if (loadedCovers.has(img.src)) show();
+        img.addEventListener('load', () => {
+          loadedCovers.add(img.src);
+          show();
+        });
+        // Without this size, try the fallback, then leave the placeholder showing.
+        img.addEventListener('error', () => {
+          img.remove();
+          if (fallback) add(fallback);
+        });
+        box.append(img);
+      };
+      const px = COVER_SIZES[size];
+      // The big random pick lays its sharp cover over the 500px one, which shows first: at once when
+      // the collection has already loaded it, or sooner because it is smaller. While the cover's
+      // color is still being read, though, a third download slowed the sharp cover by about half a
+      // second on 4G, so then it asks for 1200px alone (docs/investigations/random-cover-speed.md).
+      if (px > 500 && (loadedCovers.has(url(500)) || item.coverColor)) {
+        add(500);
+        add(px);
+      } else {
+        add(px, px > 500 ? 500 : null);
+      }
     }
     return box;
   }
@@ -183,7 +203,7 @@
     fillFormatSelect($('#filter-format'), 'All formats');
     fillFormatSelect($('#random-format'), 'Any format');
     fillFormatSelect($('#add-format'));
-    fillFormatSelect($('#list-format'));
+    fillFormatSelect($('#import-format'));
     fillFormatSelect($('#manual-form').elements.format);
     fillFormatSelect($('#edit-form').elements.format);
   }
@@ -399,7 +419,7 @@
     }
     $('#filter-format-field').hidden = wishlistMode;
     $('#view-switch').hidden = wishlistMode;
-    $('#list-import-tools').hidden = !wishlistMode && !records.length; // the empty shelf has its own button
+    $('#import-btn').hidden = !wishlistMode && !records.length; // the empty shelf has its own Import button
     renderLookup();
     $('#collection-empty').hidden = wishlistMode || all.length > 0;
     $('#wishlist-empty').hidden = !wishlistMode || all.length > 0;
@@ -1002,87 +1022,144 @@
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
-  async function importBackup(event) {
-    const file = event.target.files[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      const { added, skipped, wishes } = store.importJSON(await file.text());
-      let message = `Imported ${plural(added, 'record')}`;
-      if (wishes) message += ` and ${wishes} for your wishlist`;
-      if (skipped) message += `. Skipped ${skipped} already here or incomplete.`;
-      toast(message);
-    } catch (e) {
-      toast(e.message);
-    }
+  // ---------- Importing ----------
+
+  // What the import dialog would add: a backup as RC.store.readImport reads it, or a list or spreadsheet
+  // with the albums already in the collection taken out. Null when there's nothing to add.
+  let importing = null;
+
+  // The file being imported, shown by name in place of the paste box: { name, content } with what
+  // RC.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
+  let chosenFile = null;
+
+  function chooseImportSource(file) {
+    chosenFile = file;
+    $('#import-paste').hidden = Boolean(file);
+    $('#import-chosen').hidden = !file;
+    $('#import-file-name').textContent = file ? file.name : '';
+    previewImport();
   }
 
-  // ---------- Importing a list ----------
-
-  // Records to add from the list in the import dialog, minus albums already in the collection.
-  let listItems = [];
-
-  function openListImport() {
-    $('#list-form').reset();
-    $('#list-format').value = $('#add-format').value;
-    previewList();
-    const dialog = $('#list-dialog');
+  function openImport() {
+    $('#import-form').reset();
+    $('#import-format').value = $('#add-format').value;
+    chooseImportSource(null);
+    const dialog = $('#import-dialog');
     dialog.returnValue = '';
     dialog.showModal();
   }
 
-  // Says what the import will do, as the list is typed, pasted or loaded from a file.
-  function previewList() {
-    const { items, unreadable, merged } = S.parseRecordList($('#list-form').elements.list.value);
-    listItems = items.filter((item) => !store.findCopy(item));
-    const owned = items.length - listItems.length;
-    const notes = [];
-    if (owned) notes.push(`${plural(owned, 'record')} already in your collection ${owned === 1 ? 'is' : 'are'} skipped.`);
-    if (merged) notes.push(`${plural(merged, 'line')} named an album already on the list, so ${merged === 1 ? 'it was' : 'they were'} combined into one record with a note like "2 copies".`);
-    const summary = [];
-    if (listItems.length) summary.push(h('p', { class: 'list-count' }, `${plural(listItems.length, 'record')} to add.`));
-    if (notes.length) summary.push(h('p', { class: 'muted small' }, notes.join(' ')));
-    if (unreadable.length) {
-      const shown = unreadable.slice(0, 5);
-      summary.push(h('div', { class: 'list-problem' },
-        h('p', {}, `${plural(unreadable.length, 'line')} couldn't be read, so ${unreadable.length === 1 ? "it's" : "they're"} left out. Each line needs an artist, a dash with a space on each side, then the title.`),
-        h('ul', {}, shown.map((line) => h('li', {}, line))),
-        unreadable.length > shown.length ? h('p', { class: 'small' }, `and ${unreadable.length - shown.length} more`) : null));
-    }
-    $('#list-summary').replaceChildren(...summary);
-    $('#list-submit').disabled = !listItems.length;
-    $('#list-submit').textContent = listItems.length ? `Add ${plural(listItems.length, 'record')}` : 'Add records';
+  const andList = (words) => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
+  const columnNames = (names) => `${andList(names)} ${names.length === 1 ? 'column' : 'columns'}`;
+  const importProblem = (...children) => h('div', { class: 'import-problem' }, ...children);
+
+  function showImport(next, summary) {
+    importing = next;
+    $('#import-format-field').hidden = Boolean(next) && next.kind === 'backup'; // a backup's records keep their own formats
+    $('#import-summary').replaceChildren(...summary);
+    $('#import-submit').disabled = !next;
+    $('#import-submit').textContent = !next ? 'Add records' : next.kind === 'backup' ? 'Import backup' : `Add ${plural(next.items.length, 'record')}`;
   }
 
-  async function loadListFile(event) {
+  // Says what the import will do, as text is typed, pasted or loaded from a file.
+  function previewImport() {
+    if (chosenFile && chosenFile.problem) {
+      showImport(null, [importProblem(h('p', {}, chosenFile.problem))]);
+      return;
+    }
+    let read;
+    try {
+      read = S.readImport(chosenFile ? chosenFile.content : $('#import-form').elements.text.value);
+    } catch (e) {
+      showImport(null, [importProblem(h('p', {}, e.message))]);
+      return;
+    }
+    if (read.kind === 'backup') {
+      const wishes = read.wishlist.length ? ` and ${read.wishlist.length} on your wishlist` : '';
+      showImport(read.records.length || read.wishlist.length ? read : null, [
+        h('p', { class: 'import-count' }, `A Record Catalog backup with ${plural(read.records.length, 'record')}${wishes}.`),
+        h('p', { class: 'muted small' }, 'Albums you already have are skipped.'),
+      ]);
+      return;
+    }
+
+    const unit = read.kind === 'table' ? 'row' : 'line';
+    const items = store.notInCollection(read.items);
+    const owned = read.items.length - items.length;
+    const notes = [];
+    if (read.kind === 'table') {
+      const from = read.app ? ` of this ${read.app} export` : '';
+      notes.push(`Read the ${columnNames(read.columns)}${from}${read.ignored.length ? ` and left out the ${columnNames(read.ignored)}` : ''}.`);
+    }
+    if (owned) notes.push(`${plural(owned, 'record')} already in your collection ${owned === 1 ? 'is' : 'are'} skipped.`);
+    if (read.merged) notes.push(`${plural(read.merged, unit)} named an album already on the list, so ${read.merged === 1 ? 'it was' : 'they were'} combined into one record with a note like "2 copies".`);
+    const summary = [];
+    if (items.length) summary.push(h('p', { class: 'import-count' }, `${plural(items.length, 'record')} to add.`));
+    if (notes.length) summary.push(h('p', { class: 'muted small' }, notes.join(' ')));
+    const rowList = (className, message, rows) => h('div', { class: className },
+      h('p', {}, message),
+      h('ul', {}, rows.slice(0, 5).map((row) => h('li', {}, row))),
+      rows.length > 5 ? h('p', { class: 'small' }, `and ${rows.length - 5} more`) : null);
+    const leftOut = (n) => `so ${n === 1 ? "it's" : "they're"} left out.`;
+    if (read.kind === 'table' && read.notVinyl.length) {
+      const n = read.notVinyl.length;
+      summary.push(rowList('import-note', `${plural(n, 'row')} ${n === 1 ? 'is a CD or cassette' : 'are CDs or cassettes'}, ${leftOut(n)}`, read.notVinyl));
+    }
+    if (read.unreadable.length) {
+      const n = read.unreadable.length;
+      const needs = read.kind === 'table' ? 'Each row needs an artist and a title.' : 'Each line needs an artist, a dash with a space on each side, then the title.';
+      summary.push(rowList('import-problem', `${plural(n, unit)} couldn't be read, ${leftOut(n)} ${needs}`, read.unreadable));
+    }
+    showImport(items.length ? { ...read, items } : null, summary);
+  }
+
+  async function loadImportFile(event) {
     const file = event.target.files[0];
     event.target.value = '';
     if (!file) return;
+    let source;
     try {
-      $('#list-form').elements.list.value = await file.text();
+      const bytes = await file.arrayBuffer().catch(() => {
+        throw new Error("Couldn't read that file.");
+      });
+      source = { name: file.name, content: await S.fileContent(new Uint8Array(bytes)) };
     } catch (e) {
-      toast("Couldn't read that file.");
-      return;
+      source = { name: file.name, problem: e.message };
     }
-    previewList();
+    chooseImportSource(source);
   }
 
-  function onListDialogClosed() {
-    if ($('#list-dialog').returnValue === 'import') importList();
+  function pasteInstead() {
+    chooseImportSource(null);
+    $('#import-form').elements.text.focus();
+  }
+
+  function onImportDialogClosed() {
+    if ($('#import-dialog').returnValue !== 'import' || !importing) return;
+    if (importing.kind === 'backup') importBackup(importing);
+    else importRecords(importing.items);
+  }
+
+  function importBackup(backup) {
+    const { added, skipped, wishes } = store.importBackup(backup);
+    let message = `Imported ${plural(added, 'record')}`;
+    if (wishes) message += ` and ${wishes} for your wishlist`;
+    if (skipped) message += `. Skipped ${skipped} already here or incomplete.`;
+    toast(message);
   }
 
   // Adds the records straight away, then looks each one up on MusicBrainz in the background.
-  function importList() {
-    const format = $('#list-format').value;
-    const inputs = listItems.map((item) => ({
-      artist: item.artist, title: item.title, notes: item.notes, format: item.format || format, pendingLookup: true,
-    }));
-    const wishes = inputs.map((input) => store.findWish(input)).filter(Boolean);
+  function importRecords(items) {
+    const format = $('#import-format').value;
+    const inputs = items.map((item) => ({ ...item, format: item.format || format, pendingLookup: true }));
+    const wishesBefore = store.wishlist();
     const { added } = store.addMany(inputs);
     if (!added.length) {
       toast('Those records are already in your collection.');
       return;
     }
+    const kept = new Set(store.wishlist().map((wish) => wish.id));
+    const wishes = wishesBefore.filter((wish) => !kept.has(wish.id)); // ticked off by this import, put back by Undo
     // The lookups may have started already, from the change to the collection, and listed some.
     for (const record of added) if (!lookupSession.ids.includes(record.id)) lookupSession.ids.push(record.id);
     saveLookupSession();
@@ -1273,15 +1350,14 @@
     store.setPref('sort', e.target.value);
     renderCollection();
   });
-  for (const button of document.querySelectorAll('.list-import-btn')) button.addEventListener('click', openListImport);
-  $('#list-form').elements.list.addEventListener('input', previewList);
-  $('#list-file-btn').addEventListener('click', () => $('#list-file').click());
-  $('#list-file').addEventListener('change', loadListFile);
-  $('#list-cancel').addEventListener('click', () => $('#list-dialog').close('cancel'));
-  $('#list-dialog').addEventListener('close', onListDialogClosed);
+  for (const button of document.querySelectorAll('.import-open')) button.addEventListener('click', openImport);
+  $('#import-form').elements.text.addEventListener('input', previewImport);
+  $('#import-file-btn').addEventListener('click', () => $('#import-file').click());
+  $('#import-file').addEventListener('change', loadImportFile);
+  $('#import-paste-btn').addEventListener('click', pasteInstead);
+  $('#import-cancel').addEventListener('click', () => $('#import-dialog').close('cancel'));
+  $('#import-dialog').addEventListener('close', onImportDialogClosed);
   $('#export-btn').addEventListener('click', exportBackup);
-  $('#import-btn').addEventListener('click', () => $('#import-file').click());
-  $('#import-file').addEventListener('change', importBackup);
 
   $('#edit-dialog').addEventListener('close', onEditorClosed);
   $('#edit-cancel').addEventListener('click', () => $('#edit-dialog').close('cancel'));
