@@ -57,22 +57,27 @@
 
   // The main color of a cover, for tinting the screen behind it. A small copy is drawn to a canvas
   // and sampled, which needs the image server to allow cross-origin reads. When it doesn't, or there's
-  // no cover, this falls back to the record's placeholder color.
+  // no cover, this falls back to the record's placeholder color. A color read from a cover is kept
+  // with the record, so the next time it shows at once, without downloading anything.
   const albumColors = new Map();
 
   function albumColor(item) {
     const fallback = labelColor(item);
     if (!item.releaseGroupId) return Promise.resolve(fallback);
+    if (item.coverColor) return Promise.resolve(item.coverColor);
     if (!albumColors.has(item.releaseGroupId)) {
       albumColors.set(item.releaseGroupId, new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          let color = null;
           try {
-            resolve(mainColor(img) || fallback);
+            color = mainColor(img);
           } catch (e) {
-            resolve(fallback); // the browser refused to read the pixels
+            // the browser refused to read the pixels
           }
+          if (color) store.setCoverColor(item.id, color);
+          resolve(color || fallback);
         };
         img.onerror = () => resolve(fallback);
         img.src = mb.coverUrl(item.releaseGroupId, 250);
@@ -130,7 +135,7 @@
   }
 
   // Cover Art Archive sizes in pixels, about 3x the size shown so covers stay sharp on phone screens.
-  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [1200, 500] };
+  const COVER_SIZES = { sm: 500, md: 500, grid: 500, lg: 1200 };
   // Covers that have loaded once show straight away when a list is drawn again, instead of fading in.
   const loadedCovers = new Set();
 
@@ -144,21 +149,36 @@
     placeholder.style.setProperty('--label', labelColor(item));
     box.append(placeholder);
     if (item.releaseGroupId) {
-      const sizes = COVER_SIZES[size];
-      let attempt = 0;
-      const img = h('img', { src: mb.coverUrl(item.releaseGroupId, sizes[0]), alt: '', loading: 'lazy', decoding: 'async' });
-      if (loadedCovers.has(img.src)) box.classList.add('loaded');
-      img.addEventListener('load', () => {
-        loadedCovers.add(img.src);
-        box.classList.add('loaded');
-      });
-      // Try the next size down if the big one isn't there, then leave the placeholder showing.
-      img.addEventListener('error', () => {
-        attempt += 1;
-        if (attempt < sizes.length) img.src = mb.coverUrl(item.releaseGroupId, sizes[attempt]);
-        else img.remove();
-      });
-      box.append(img);
+      const url = (px) => mb.coverUrl(item.releaseGroupId, px);
+      const add = (px, fallback) => {
+        const img = h('img', { src: url(px), alt: '', loading: 'lazy', decoding: 'async' });
+        const show = () => {
+          img.classList.add('shown');
+          box.classList.add('loaded');
+        };
+        if (loadedCovers.has(img.src)) show();
+        img.addEventListener('load', () => {
+          loadedCovers.add(img.src);
+          show();
+        });
+        // Without this size, try the fallback, then leave the placeholder showing.
+        img.addEventListener('error', () => {
+          img.remove();
+          if (fallback) add(fallback);
+        });
+        box.append(img);
+      };
+      const px = COVER_SIZES[size];
+      // The big random pick lays its sharp cover over the 500px one, which shows first: at once when
+      // the collection has already loaded it, or sooner because it is smaller. While the cover's
+      // color is still being read, though, a third download slowed the sharp cover by about half a
+      // second on 4G, so then it asks for 1200px alone (docs/investigations/random-cover-speed.md).
+      if (px > 500 && (loadedCovers.has(url(500)) || item.coverColor)) {
+        add(500);
+        add(px);
+      } else {
+        add(px, px > 500 ? 500 : null);
+      }
     }
     return box;
   }

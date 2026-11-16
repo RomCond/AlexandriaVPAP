@@ -78,6 +78,9 @@
     return match ? Number(match[1]) : null;
   }
 
+  // A cover's main color, as the app reads it: "rgb(12 34 56)".
+  const COVER_COLOR = /^rgb\(\d{1,3} \d{1,3} \d{1,3}\)$/;
+
   function newId() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -97,6 +100,7 @@
       artistId: input.artistId || null,
       releaseGroupId: input.releaseGroupId || null,
       releaseId: input.releaseId || null,
+      coverColor: COVER_COLOR.test(input.coverColor) ? input.coverColor : null,
       // Imported records wait for a MusicBrainz lookup to fill in covers and years.
       pendingLookup: Boolean(input.pendingLookup),
       addedAt: input.addedAt || new Date().toISOString(),
@@ -837,9 +841,22 @@
         // A different artist name means the old MusicBrainz artist link no longer applies,
         // unless the change comes with a new one.
         if (!('artistId' in patch) && normArtist(next.artist) !== normArtist(before.artist)) next.artistId = null;
+        // A different cover means the saved cover color no longer applies.
+        if (!('coverColor' in patch) && next.releaseGroupId !== before.releaseGroupId) next.coverColor = null;
         records[index] = next;
         commit();
         return next;
+      },
+
+      // Keeps the main color read from a record's cover, so it isn't read again. Nothing on screen
+      // depends on it, so this saves without telling listeners, and a full storage is ignored.
+      setCoverColor(id, color) {
+        const index = records.findIndex((record) => record.id === id);
+        if (index < 0 || !COVER_COLOR.test(color) || records[index].coverColor === color) return;
+        records[index] = { ...records[index], coverColor: color };
+        try {
+          write(KEYS.records, records);
+        } catch (ignored) {}
       },
 
       // Adds several records at once, skipping albums you already have. Returns { added, skipped }.

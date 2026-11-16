@@ -384,12 +384,17 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').classList.contains('has-album'));
     assert.match(await albumTint(), /^hsl\(/);
     await page.selectOption('#random-artist', '');
-    // Kid A is the only Double LP, and it has a cover: the big pick uses the 1200px version
+    // Kid A is the only Double LP, and it has a cover. The list above already loaded its 500px cover,
+    // so the pick shows that at once without asking for it again, then lays the 1200px cover over it.
     await page.selectOption('#random-format', 'Double LP');
+    const kidA500 = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-500')).length;
+    const kidA500Before = kidA500();
+    assert.ok(kidA500Before > 0, 'the list loaded the 500px cover');
     await page.click('#spin-btn');
     assert.equal(await text(page, '.pick-title'), 'Kid A');
-    await page.locator('#spin-sleeve .cover.loaded').waitFor();
-    assert.ok(coverCalls.some((url) => url.endsWith('/rg-kida/front-1200')));
+    assert.equal(await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-500"]').count(), 1, 'the 500px cover shows at once');
+    await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-1200"]').waitFor();
+    assert.equal(kidA500(), kidA500Before, 'the 500px cover came from memory');
     // Kid A has a cover, so the card fades down from the cover's main color
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
     const [r, g, b] = (await albumTint()).match(/\d+/g).map(Number);
@@ -552,6 +557,69 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the random pick shows the 500px cover while the 1200px one loads', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, coverCalls } = await openApp(browser);
+    // Kid A's 1200px cover is slow to arrive, and OK Computer has no 1200px cover at all.
+    await context.route(/\/front-1200$/, async (route) => {
+      if (route.request().url().includes('/rg-okc/')) return route.fulfill({ status: 404, body: '' });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return route.fallback();
+    });
+    await page.evaluate(() => {
+      const record = (id, title, format) => ({ id, artist: 'Radiohead', title, year: 2000, format, releaseGroupId: `rg-${id}`, notes: '', addedAt: new Date(2024, 0, 1).toISOString() });
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
+    });
+    await page.goto(`${PAGE_URL}#random`);
+    await page.reload();
+    const shown = () => page.locator('#spin-sleeve img.shown').evaluateAll((imgs) => imgs.map((img) => img.src.split('/').pop()));
+
+    // Opened straight on Random, so nothing has loaded Kid A's cover yet, and its color hasn't been
+    // read. Only the 1200px cover is asked for, so it doesn't share the connection with two others.
+    const calls = (size) => coverCalls.filter((url) => url.endsWith(`/rg-kida/front-${size}`)).length;
+    assert.ok(!coverCalls.some((url) => url.includes('/rg-kida/')));
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-1200']);
+    assert.equal(calls(500), 0);
+
+    // The cover's main color is kept with the record. After a reload the card takes it at once,
+    // without reading the cover again.
+    const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
+    await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    assert.equal(saved, await tint());
+    await page.reload();
+    const colorReads = calls(250);
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    assert.equal(await tint(), saved);
+    assert.equal(calls(250), colorReads, 'no second read of the cover');
+
+    // With no color to read, both sizes are asked for. The 500px one shows first, and the 1200px
+    // one goes on top when it arrives.
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
+    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
+    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+
+    // Without a 1200px cover, the 500px one takes its place
+    await page.selectOption('#random-format', 'LP');
+    await page.click('#spin-btn');
+    assert.equal(await text(page, '.pick-title'), 'OK Computer');
+    await page.waitForFunction(() => document.querySelectorAll('#spin-sleeve img').length === 1);
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500']);
 
     assert.deepEqual(errors, []);
     await context.close();

@@ -1,0 +1,827 @@
+{
+ "note": "measure-tap-to-cover.js, 2026-11-15, 390x844 at 3x, 4G profile (165 ms latency, 8.1 Mbps down, 1.35 Mbps up) on top of a cloud container network and proxy. Times are ms after the tap. run names the raw run, name the condition as that run printed it.",
+ "groups": {
+  "not loaded by the grid, 1200px alone, color still to read (before, and after on a first pick)": [
+   {
+    "run": "tap-part1.json",
+    "cover": "b1392450",
+    "name": "before not-loaded",
+    "first": 1740,
+    "sharp": 1740,
+    "color": 1573,
+    "kb": 305
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e75c0549",
+    "name": "before not-loaded",
+    "first": 1239,
+    "sharp": 1239,
+    "color": 840,
+    "kb": 370
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "80975c59",
+    "name": "before not-loaded",
+    "first": 1027,
+    "sharp": 1027,
+    "color": 1210,
+    "kb": 214
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e404b349",
+    "name": "before not-loaded",
+    "first": 1203,
+    "sharp": 1203,
+    "color": 969,
+    "kb": 288
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "d2f48ef0",
+    "name": "before not-loaded",
+    "first": 877,
+    "sharp": 877,
+    "color": 928,
+    "kb": 82
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "b1392450",
+    "name": "after not-loaded",
+    "first": 1121,
+    "sharp": 1121,
+    "color": 804,
+    "kb": 303
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded",
+    "first": 1690,
+    "sharp": 1690,
+    "color": 1407,
+    "kb": 370
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "80975c59",
+    "name": "after not-loaded",
+    "first": 1023,
+    "sharp": 1023,
+    "color": 873,
+    "kb": 214
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e404b349",
+    "name": "after not-loaded",
+    "first": 1083,
+    "sharp": 1083,
+    "color": 783,
+    "kb": 288
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded",
+    "first": 984,
+    "sharp": 984,
+    "color": 867,
+    "kb": 82
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "b1392450",
+    "name": "after not-loaded",
+    "first": 1229,
+    "sharp": 1229,
+    "color": 1163,
+    "kb": 303
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded",
+    "first": 1200,
+    "sharp": 1200,
+    "color": 969,
+    "kb": 370
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "80975c59",
+    "name": "after not-loaded",
+    "first": 1217,
+    "sharp": 1217,
+    "color": 752,
+    "kb": 214
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e404b349",
+    "name": "after not-loaded",
+    "first": 2109,
+    "sharp": 2109,
+    "color": 1759,
+    "kb": 288
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded",
+    "first": 912,
+    "sharp": 912,
+    "color": 745,
+    "kb": 82
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "b1392450",
+    "name": "before not-loaded",
+    "first": 1089,
+    "sharp": 1089,
+    "color": 873,
+    "kb": 303
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "b1392450",
+    "name": "after not-loaded",
+    "first": 1388,
+    "sharp": 1388,
+    "color": 804,
+    "kb": 303
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e75c0549",
+    "name": "before not-loaded",
+    "first": 1185,
+    "sharp": 1185,
+    "color": 885,
+    "kb": 370
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded",
+    "first": 1333,
+    "sharp": 1333,
+    "color": 800,
+    "kb": 370
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "80975c59",
+    "name": "before not-loaded",
+    "first": 1157,
+    "sharp": 1157,
+    "color": 1141,
+    "kb": 215
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "80975c59",
+    "name": "after not-loaded",
+    "first": 1048,
+    "sharp": 1048,
+    "color": 1147,
+    "kb": 214
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e404b349",
+    "name": "after not-loaded",
+    "first": 1363,
+    "sharp": 1363,
+    "color": 1097,
+    "kb": 288
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e404b349",
+    "name": "before not-loaded",
+    "first": 1058,
+    "sharp": 1058,
+    "color": 741,
+    "kb": 288
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "d2f48ef0",
+    "name": "before not-loaded",
+    "first": 1187,
+    "sharp": 1187,
+    "color": 736,
+    "kb": 82
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded",
+    "first": 818,
+    "sharp": 818,
+    "color": 851,
+    "kb": 82
+   }
+  ],
+  "not loaded by the grid, 500px and 1200px together, color still to read (rejected)": [
+   {
+    "run": "tap-part1.json",
+    "cover": "b1392450",
+    "name": "after not-loaded",
+    "first": 1128,
+    "sharp": 1944,
+    "color": 1211,
+    "kb": 387
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded",
+    "first": 1812,
+    "sharp": 2112,
+    "color": 1562,
+    "kb": 461
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "80975c59",
+    "name": "after not-loaded",
+    "first": 1017,
+    "sharp": 1065,
+    "color": 819,
+    "kb": 261
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e404b349",
+    "name": "after not-loaded",
+    "first": 860,
+    "sharp": 1760,
+    "color": 1243,
+    "kb": 378
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded",
+    "first": 833,
+    "sharp": 1783,
+    "color": 849,
+    "kb": 124
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "b1392450",
+    "name": "both not-loaded",
+    "first": 1557,
+    "sharp": 1924,
+    "color": 1474,
+    "kb": 387
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e75c0549",
+    "name": "both not-loaded",
+    "first": 894,
+    "sharp": 2094,
+    "color": 911,
+    "kb": 461
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "80975c59",
+    "name": "both not-loaded",
+    "first": 994,
+    "sharp": 994,
+    "color": 725,
+    "kb": 263
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e404b349",
+    "name": "both not-loaded",
+    "first": 1315,
+    "sharp": 1765,
+    "color": 933,
+    "kb": 376
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "d2f48ef0",
+    "name": "both not-loaded",
+    "first": 967,
+    "sharp": 1567,
+    "color": 1469,
+    "kb": 127
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "b1392450",
+    "name": "both not-loaded",
+    "first": 906,
+    "sharp": 1573,
+    "color": 856,
+    "kb": 387
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e75c0549",
+    "name": "both not-loaded",
+    "first": 1118,
+    "sharp": 2118,
+    "color": 1051,
+    "kb": 462
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "80975c59",
+    "name": "both not-loaded",
+    "first": 1621,
+    "sharp": 1971,
+    "color": 1355,
+    "kb": 261
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e404b349",
+    "name": "both not-loaded",
+    "first": 906,
+    "sharp": 1856,
+    "color": 1240,
+    "kb": 376
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "d2f48ef0",
+    "name": "both not-loaded",
+    "first": 1375,
+    "sharp": 1375,
+    "color": 842,
+    "kb": 125
+   }
+  ],
+  "not loaded by the grid, 500px and 1200px together, color saved (after)": [
+   {
+    "run": "tap-part1.json",
+    "cover": "b1392450",
+    "name": "after not-loaded+color",
+    "first": 906,
+    "sharp": 1123,
+    "color": 13,
+    "kb": 346
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded+color",
+    "first": 933,
+    "sharp": 1467,
+    "color": 6,
+    "kb": 431
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "80975c59",
+    "name": "after not-loaded+color",
+    "first": 1423,
+    "sharp": 1423,
+    "color": 10,
+    "kb": 240
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e404b349",
+    "name": "after not-loaded+color",
+    "first": 1256,
+    "sharp": 1323,
+    "color": 9,
+    "kb": 348
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded+color",
+    "first": 822,
+    "sharp": 1738,
+    "color": 6,
+    "kb": 108
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "b1392450",
+    "name": "both not-loaded+color",
+    "first": 986,
+    "sharp": 1153,
+    "color": 9,
+    "kb": 346
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e75c0549",
+    "name": "both not-loaded+color",
+    "first": 1109,
+    "sharp": 1242,
+    "color": 7,
+    "kb": 431
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "80975c59",
+    "name": "both not-loaded+color",
+    "first": 1115,
+    "sharp": 1115,
+    "color": 6,
+    "kb": 240
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e404b349",
+    "name": "both not-loaded+color",
+    "first": 851,
+    "sharp": 1684,
+    "color": 6,
+    "kb": 348
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "d2f48ef0",
+    "name": "both not-loaded+color",
+    "first": 969,
+    "sharp": 1219,
+    "color": 6,
+    "kb": 108
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "b1392450",
+    "name": "both not-loaded+color",
+    "first": 1441,
+    "sharp": 1441,
+    "color": 7,
+    "kb": 346
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e75c0549",
+    "name": "both not-loaded+color",
+    "first": 1057,
+    "sharp": 1223,
+    "color": 6,
+    "kb": 431
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "80975c59",
+    "name": "both not-loaded+color",
+    "first": 834,
+    "sharp": 1117,
+    "color": 7,
+    "kb": 238
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e404b349",
+    "name": "both not-loaded+color",
+    "first": 1021,
+    "sharp": 1187,
+    "color": 6,
+    "kb": 348
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "d2f48ef0",
+    "name": "both not-loaded+color",
+    "first": 1073,
+    "sharp": 1189,
+    "color": 6,
+    "kb": 110
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "b1392450",
+    "name": "after not-loaded+color",
+    "first": 1105,
+    "sharp": 1221,
+    "color": 6,
+    "kb": 348
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded+color",
+    "first": 1105,
+    "sharp": 1588,
+    "color": 9,
+    "kb": 431
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "80975c59",
+    "name": "after not-loaded+color",
+    "first": 1048,
+    "sharp": 1198,
+    "color": 7,
+    "kb": 238
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e404b349",
+    "name": "after not-loaded+color",
+    "first": 1025,
+    "sharp": 1025,
+    "color": 8,
+    "kb": 348
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded+color",
+    "first": 1673,
+    "sharp": 2306,
+    "color": 6,
+    "kb": 108
+   }
+  ],
+  "loaded by the grid, before": [
+   {
+    "run": "tap-part1.json",
+    "cover": "b1392450",
+    "name": "before grid-loaded",
+    "first": 1166,
+    "sharp": 1166,
+    "color": 1016,
+    "kb": 303
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e75c0549",
+    "name": "before grid-loaded",
+    "first": 1226,
+    "sharp": 1226,
+    "color": 976,
+    "kb": 370
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "80975c59",
+    "name": "before grid-loaded",
+    "first": 1185,
+    "sharp": 1185,
+    "color": 971,
+    "kb": 214
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e404b349",
+    "name": "before grid-loaded",
+    "first": 1272,
+    "sharp": 1272,
+    "color": 1189,
+    "kb": 288
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "d2f48ef0",
+    "name": "before grid-loaded",
+    "first": 850,
+    "sharp": 850,
+    "color": 770,
+    "kb": 82
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "b1392450",
+    "name": "before grid-loaded",
+    "first": 1381,
+    "sharp": 1381,
+    "color": 967,
+    "kb": 303
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e75c0549",
+    "name": "before grid-loaded",
+    "first": 1502,
+    "sharp": 1502,
+    "color": 802,
+    "kb": 370
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "80975c59",
+    "name": "before grid-loaded",
+    "first": 1520,
+    "sharp": 1520,
+    "color": 870,
+    "kb": 214
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e404b349",
+    "name": "before grid-loaded",
+    "first": 1102,
+    "sharp": 1102,
+    "color": 753,
+    "kb": 288
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "d2f48ef0",
+    "name": "before grid-loaded",
+    "first": 920,
+    "sharp": 920,
+    "color": 953,
+    "kb": 82
+   }
+  ],
+  "loaded by the grid, after": [
+   {
+    "run": "tap-part1.json",
+    "cover": "b1392450",
+    "name": "after grid-loaded",
+    "first": 10,
+    "sharp": 1289,
+    "color": 1239,
+    "kb": 305
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e75c0549",
+    "name": "after grid-loaded",
+    "first": 5,
+    "sharp": 1333,
+    "color": 985,
+    "kb": 370
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "80975c59",
+    "name": "after grid-loaded",
+    "first": 5,
+    "sharp": 1070,
+    "color": 1370,
+    "kb": 214
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "e404b349",
+    "name": "after grid-loaded",
+    "first": 5,
+    "sharp": 1322,
+    "color": 757,
+    "kb": 288
+   },
+   {
+    "run": "tap-part2.json",
+    "cover": "d2f48ef0",
+    "name": "after grid-loaded",
+    "first": 4,
+    "sharp": 1319,
+    "color": 718,
+    "kb": 82
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "b1392450",
+    "name": "after grid-loaded",
+    "first": 5,
+    "sharp": 1082,
+    "color": 849,
+    "kb": 303
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e75c0549",
+    "name": "after grid-loaded",
+    "first": 10,
+    "sharp": 1702,
+    "color": 1019,
+    "kb": 370
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "80975c59",
+    "name": "after grid-loaded",
+    "first": 5,
+    "sharp": 1285,
+    "color": 851,
+    "kb": 214
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "e404b349",
+    "name": "after grid-loaded",
+    "first": 4,
+    "sharp": 1089,
+    "color": 923,
+    "kb": 288
+   },
+   {
+    "run": "tap-final.json",
+    "cover": "d2f48ef0",
+    "name": "after grid-loaded",
+    "first": 6,
+    "sharp": 854,
+    "color": 971,
+    "kb": 82
+   }
+  ],
+  "not loaded by the grid, 1200px alone, color saved (rejected)": [
+   {
+    "run": "tap-strategy.json",
+    "cover": "b1392450",
+    "name": "after not-loaded+color",
+    "first": 1235,
+    "sharp": 1235,
+    "color": 6,
+    "kb": 263
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded+color",
+    "first": 1430,
+    "sharp": 1430,
+    "color": 5,
+    "kb": 341
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "80975c59",
+    "name": "after not-loaded+color",
+    "first": 1406,
+    "sharp": 1406,
+    "color": 5,
+    "kb": 191
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "e404b349",
+    "name": "after not-loaded+color",
+    "first": 1594,
+    "sharp": 1594,
+    "color": 5,
+    "kb": 260
+   },
+   {
+    "run": "tap-strategy.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded+color",
+    "first": 842,
+    "sharp": 842,
+    "color": 4,
+    "kb": 66
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "b1392450",
+    "name": "after not-loaded+color",
+    "first": 1444,
+    "sharp": 1444,
+    "color": 10,
+    "kb": 264
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e75c0549",
+    "name": "after not-loaded+color",
+    "first": 1236,
+    "sharp": 1236,
+    "color": 8,
+    "kb": 342
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "80975c59",
+    "name": "after not-loaded+color",
+    "first": 1328,
+    "sharp": 1328,
+    "color": 6,
+    "kb": 192
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "e404b349",
+    "name": "after not-loaded+color",
+    "first": 1304,
+    "sharp": 1304,
+    "color": 7,
+    "kb": 260
+   },
+   {
+    "run": "tap-strategy2.json",
+    "cover": "d2f48ef0",
+    "name": "after not-loaded+color",
+    "first": 1048,
+    "sharp": 1048,
+    "color": 6,
+    "kb": 66
+   }
+  ]
+ }
+}

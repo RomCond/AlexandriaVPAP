@@ -982,7 +982,7 @@ button.wished {
   transition: opacity 0.25s;
 }
 
-.cover.loaded img { opacity: 1; }
+.cover img.shown { opacity: 1; }
 
 /* ---------- Random ---------- */
 
