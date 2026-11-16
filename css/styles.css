@@ -800,7 +800,7 @@ button.wished {
   gap: 8px;
 }
 
-/* ---------- Importing a list ---------- */
+/* ---------- Importing ---------- */
 
 .lookup {
   margin-bottom: 16px;
@@ -839,9 +839,26 @@ button.wished {
   background: var(--surface);
 }
 
-.list-help { margin: 8px 0 14px; }
+.import-help { margin: 8px 0 14px; }
+.import-help q { white-space: nowrap; }
 
-.list-options {
+.import-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.import-file-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.import-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -850,28 +867,36 @@ button.wished {
   margin-top: 12px;
 }
 
-.list-options .add-as { margin-top: 0; }
+.import-options .add-as { margin-top: 0; }
 
-.list-summary:not(:empty) { margin-top: 14px; }
-.list-summary p { margin: 0 0 6px; }
-.list-count { font-weight: 600; }
+.import-summary:not(:empty) { margin-top: 14px; }
+.import-summary p { margin: 0 0 6px; }
+.import-count { font-weight: 600; }
 
-.list-problem {
+.import-problem, .import-note {
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
   font-size: 0.925rem;
 }
 
-.list-problem ul {
+.import-problem {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.import-note {
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.import-problem ul, .import-note ul {
   margin: 6px 0 0;
   padding-left: 18px;
   overflow-wrap: anywhere;
 }
 
-.list-problem p:last-child { margin: 4px 0 0; }
+.import-problem p:last-child, .import-note p:last-child { margin: 4px 0 0; }
 
 .empty h2 { margin-bottom: 6px; font-size: 1.4rem; }
 .empty p { margin: 0 0 18px; }
@@ -1170,6 +1195,11 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
   align-items: center;
   gap: 8px;
   margin-top: 18px;
+}
+
+.dialog-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .spacer { flex: 1; }

@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const S = require('../js/store.js');
+
+// What choosing a backup file in the import dialog does.
+const restore = (store, text) => store.importBackup(S.readImport(text));
 
 test('normTitle ignores case, accents, punctuation and edition notes', () => {
   assert.equal(S.normTitle('OK Computer (Remastered 2009)'), S.normTitle('ok computer'));
@@ -126,7 +131,7 @@ test('backups carry vinyl confirmations', () => {
   const source = S.createStore(S.memoryStorage());
   source.confirmVinyl('gone-now');
   const target = S.createStore(S.memoryStorage());
-  target.importJSON(source.exportJSON());
+  restore(target, source.exportJSON());
   assert.equal(target.confirmedByYou('gone-now'), true);
 });
 
@@ -138,7 +143,7 @@ test('backups carry the wishlist too', () => {
 
   const target = S.createStore(S.memoryStorage());
   target.add({ artist: 'Weezer', title: 'Maladroit', releaseGroupId: 'mal' }); // already have it here
-  assert.deepEqual(target.importJSON(source.exportJSON()), { added: 1, skipped: 0, wishes: 1 });
+  assert.deepEqual(restore(target, source.exportJSON()), { added: 1, skipped: 0, wishes: 1 });
   assert.deepEqual(target.wishlist().map((w) => w.title), ['Pinkerton'], 'albums you already have stay off the wishlist');
 });
 
@@ -201,14 +206,85 @@ test('backups round trip and do not create duplicates', () => {
   const backup = source.exportJSON();
 
   const target = S.createStore(S.memoryStorage());
-  assert.deepEqual(target.importJSON(backup), { added: 2, skipped: 0, wishes: 0 });
-  assert.deepEqual(target.importJSON(backup), { added: 0, skipped: 2, wishes: 0 });
+  assert.deepEqual(restore(target, backup), { added: 2, skipped: 0, wishes: 0 });
+  assert.deepEqual(restore(target, backup), { added: 0, skipped: 2, wishes: 0 });
   assert.equal(target.all()[0].format, 'Double LP');
-  assert.deepEqual(target.importJSON(JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }])), { added: 1, skipped: 1, wishes: 0 });
+  assert.deepEqual(restore(target, JSON.stringify([{ artist: 'Low', title: 'Things We Lost in the Fire' }, { title: 'No artist' }, { artist: 'low', title: 'things we lost in the fire' }])), { added: 1, skipped: 2, wishes: 0 });
   // A backup from another device skips albums you already have, even with different ids
-  assert.deepEqual(target.importJSON(JSON.stringify([{ id: 'other-device', artist: 'portishead', title: 'Dummy' }])), { added: 0, skipped: 1, wishes: 0 });
-  assert.throws(() => target.importJSON('not json'), /valid backup/);
-  assert.throws(() => target.importJSON('{"hello": 1}'), /look like/);
+  assert.deepEqual(restore(target, JSON.stringify([{ id: 'other-device', artist: 'portishead', title: 'Dummy' }])), { added: 0, skipped: 1, wishes: 0 });
+  assert.throws(() => restore(target, '{"records": [}'), /valid backup/);
+  assert.throws(() => restore(target, '{"hello": 1}'), /look like/);
+});
+
+test('fileContent reads UTF-8 and the encodings Excel saves text in', async () => {
+  assert.equal(await S.fileContent(new TextEncoder().encode('﻿Artist,Title\nMotörhead,Ace of Spades')), 'Artist,Title\nMotörhead,Ace of Spades');
+  const windows1252 = Uint8Array.from([...'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite'], (ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0)));
+  assert.equal(await S.fileContent(windows1252), 'Motörhead - Ace of Spades\nGuns N’ Roses - Appetite', 'CSV saved by Excel on Windows');
+  const utf16 = Uint8Array.from([0xff, 0xfe, ...Buffer.from('Artist\tTitle\nBjörk\tPost', 'utf16le')]);
+  assert.equal(await S.fileContent(utf16), 'Artist\tTitle\nBjörk\tPost', 'Unicode Text saved by Excel');
+});
+
+const fixture = (name) => new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', name)));
+
+test('fileContent reads the first sheet of an .xlsx file, and readImport reads it like a CSV', async () => {
+  const read = S.readImport(await S.fileContent(fixture('records-xlsxwriter.xlsx')));
+  assert.equal(read.kind, 'table');
+  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Label', 'Notes']);
+  assert.deepEqual(read.notVinyl, ['Björk, Post, 1995, CD']);
+  assert.deepEqual(read.items, [
+    { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: 'Label: ABC' },
+    { artist: 'Motörhead', title: 'Ace of Spades', year: 1980, format: '45', notes: 'Signed; Label: Bronze' },
+    { artist: 'Crosby, Stills & Nash', title: 'Crosby, Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold\nfirst press; Label: Atlantic' },
+    { artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: '' },
+    { artist: 'Weezer', title: 'Pinkerton', year: 1996, format: 'LP', notes: '' },
+  ], 'a date in the Year column gives its year, and the second sheet is not read');
+});
+
+test('fileContent gives every cell of an .xlsx row as text, and reads a number as a date only when its format is a date', async () => {
+  const rows = await S.fileContent(fixture('records-xlsxwriter-gaps.xlsx'));
+  assert.deepEqual(rows, [['Artist', 'Album', 'Year', 'Format'], ['Portishead', 'Portishead', '', 'LP'], ['Steely Dan', 'Gaucho', '1980', 'LP']],
+    'an empty cell in the middle is an empty string, and 0 "AD" is a number format, not a date');
+});
+
+test('fileContent reads the first sheet whose first row names the columns, or else the first sheet', async () => {
+  const summaryFirst = S.readImport(await S.fileContent(fixture('records-summary-first.xlsx')));
+  assert.deepEqual([summaryFirst.kind, summaryFirst.items.map((item) => `${item.artist} - ${item.title}`)], ['table', ['Steely Dan - Aja', 'Rush - Signals']],
+    'a Summary sheet before the records is passed over');
+  const noNames = S.readImport(await S.fileContent(fixture('records-no-column-names.xlsx')));
+  assert.deepEqual([noNames.kind, noNames.items.map((item) => `${item.artist} - ${item.title}`)], ['list', ['Steely Dan - Gaucho']],
+    'with no column names anywhere, the first sheet reads like two columns pasted in');
+});
+
+test('fileContent reads .xlsx files from LibreOffice and from workbooks dated from 1904', async () => {
+  const libreoffice = S.readImport(await S.fileContent(fixture('records-libreoffice.xlsx')));
+  assert.deepEqual(libreoffice.items.map((item) => [item.title, item.year]), [['Dummy', 1994], ['Kid A', 2000]]);
+  const mac = S.readImport(await S.fileContent(fixture('records-openpyxl-1904.xlsx')));
+  assert.deepEqual(mac.items, [{ artist: 'Pink Floyd', title: 'The Dark Side of the Moon', year: 1973, format: null, notes: '' }]);
+});
+
+test('fileContent says to save as CSV for Numbers, old Excel, damaged files and browsers that cannot unzip', async () => {
+  await assert.rejects(S.fileContent(fixture('records.numbers')), /can't read Numbers or old Excel \(\.xls\) files/);
+  await assert.rejects(S.fileContent(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1])), /can't read Numbers or old Excel \(\.xls\) files/);
+  await assert.rejects(S.fileContent(fixture('records-xlsxwriter.xlsx').slice(0, 2000)), /couldn't be read\. Save the sheet as CSV/);
+  const unzip = globalThis.DecompressionStream;
+  delete globalThis.DecompressionStream;
+  try {
+    await assert.rejects(S.fileContent(fixture('records-xlsxwriter.xlsx')), /This browser can't open Excel files\. Save the sheet as CSV/);
+  } finally {
+    globalThis.DecompressionStream = unzip;
+  }
+});
+
+test('readImport knows a backup from a list that starts with a bracket', () => {
+  const source = S.createStore(S.memoryStorage());
+  source.add({ artist: 'Portishead', title: 'Dummy', releaseGroupId: 'rg-dummy' });
+  source.addToWishlist({ artist: 'Portishead', title: 'Third' });
+  const backup = S.readImport(source.exportJSON());
+  assert.equal(backup.kind, 'backup');
+  assert.deepEqual([backup.records.map((r) => r.releaseGroupId), backup.wishlist.map((w) => w.title)], [['rg-dummy'], ['Third']]);
+  assert.deepEqual(S.readImport('[]').records, [], 'an empty backup from an early version');
+  const list = S.readImport('[Signed] Rush - 2112');
+  assert.deepEqual([list.kind, list.items[0].artist], ['list', '[Signed] Rush']);
 });
 
 test('unreadable saved data is set aside instead of overwritten', () => {
@@ -320,8 +396,8 @@ test('pickRandom avoids recent picks until it runs out of others', () => {
   assert.equal(S.pickRandom([], []), null);
 });
 
-test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeats', () => {
-  const { items, unreadable, merged } = S.parseRecordList([
+test('readImport reads "Artist - Title" lines, keeps notes and folds repeats', () => {
+  const { kind, items, unreadable, merged } = S.readImport([
     'Steely Dan - Aja',
     '  2. Rush – Moving Pictures (Signed)',
     'Bleachers - everyone for ten minutes',
@@ -334,17 +410,107 @@ test('parseRecordList reads "Artist - Title" lines, keeps notes and folds repeat
     '',
     'Just a title',
   ].join('\r\n'));
-  assert.deepEqual(unreadable, ['Just a title']);
+  assert.deepEqual([kind, unreadable], ['list', ['Just a title']]);
   assert.equal(merged, 2);
   const byTitle = Object.fromEntries(items.map((item) => [item.title, item]));
   assert.equal(items.length, 7);
-  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', notes: '', format: null, line: 'Steely Dan - Aja' });
+  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: null, notes: '', format: null });
   assert.equal(byTitle['Moving Pictures'].notes, 'Signed', 'numbering and other dashes are fine');
   assert.equal(byTitle['everyone for ten minutes'].notes, 'Electric Lady; 2 copies');
   assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', ''], 'a note that only names the format is dropped');
   assert.equal(byTitle['Pinkerton (Deluxe Edition)'].notes, '', 'a deluxe edition keeps it in the title');
   assert.equal(byTitle.BRIGHTSIDE.notes, 'I have 2');
   assert.equal(byTitle['By The Time I Get To Phoenix'].notes, '2 copies', 'tab-separated lines work too');
+});
+
+test('readImport reads a spreadsheet saved as CSV by the names in its first row', () => {
+  const read = S.readImport([
+    'Artist,Album,Year,Format,Label,Notes,Price',
+    'Steely Dan,Aja,1977,LP,ABC,',
+    '"Crosby, Stills & Nash",Crosby Stills & Nash,1969-05-29,Vinyl,Atlantic,"Gatefold, ""first press"""',
+    'T. Rex,Teenage Dream,1974,"7""",EMI,"Bought in',
+    'London"',
+    'Rush,Moving Pictures (Signed),5/29/1981,2xLP,Mercury,VG+',
+    'Rush,Moving Pictures,,,,',
+    ',No Artist,2000,LP,,',
+    ',,,,,',
+    'Weezer,Pinkerton (Deluxe Edition),2010,"Box Set, 2xLP",,',
+    'Prince,Purple Rain,1984,Cassette,,',
+    'Björk,Post,1995,"CD, Single",,',
+    'Radiohead,In Rainbows,2007,"2xLP + CD",,',
+    'Portishead,Third,2008,Flexi-disc,,',
+    '',
+  ].join('\r\n'));
+  assert.equal(read.kind, 'table');
+  assert.deepEqual(read.columns, ['Artist', 'Album', 'Year', 'Format', 'Label', 'Notes']);
+  assert.deepEqual(read.ignored, ['Price']);
+  assert.deepEqual(read.unreadable, ['No Artist, 2000, LP'], 'a blank row is skipped, a row without an artist is listed');
+  assert.deepEqual(read.notVinyl, ['Prince, Purple Rain, 1984, Cassette', 'Björk, Post, 1995, CD, Single'], 'CD and cassette rows are left out');
+  assert.equal(read.merged, 1);
+  const byTitle = Object.fromEntries(read.items.map((item) => [item.title, item]));
+  assert.equal(read.items.length, 7);
+  assert.equal(byTitle['In Rainbows'].format, 'Double LP', 'a vinyl record with a CD inside is vinyl');
+  assert.equal(byTitle.Third.format, null, 'a format the app has no name for is left to Add as');
+  assert.deepEqual(byTitle.Aja, { artist: 'Steely Dan', title: 'Aja', year: 1977, format: 'LP', notes: 'Label: ABC' });
+  assert.deepEqual(byTitle['Crosby Stills & Nash'], {
+    artist: 'Crosby, Stills & Nash', title: 'Crosby Stills & Nash', year: 1969, format: 'LP', notes: 'Gatefold, "first press"; Label: Atlantic',
+  }, 'quoted cells keep their commas and quotes');
+  assert.deepEqual([byTitle['Teenage Dream'].format, byTitle['Teenage Dream'].notes], ['45', 'Bought in\nLondon; Label: EMI']);
+  assert.deepEqual(byTitle['Moving Pictures'], {
+    artist: 'Rush', title: 'Moving Pictures', year: 1981, format: 'Double LP', notes: 'Signed; VG+; Label: Mercury; 2 copies',
+  }, 'brackets become notes and repeats fold, as in a typed list');
+  assert.deepEqual([byTitle['Pinkerton (Deluxe Edition)'].format, byTitle['Pinkerton (Deluxe Edition)'].year], ['Box set', 2010]);
+});
+
+test('readImport keeps label, catalog number and condition columns in the notes', () => {
+  const read = S.readImport('Artist,Title,Record Label,Cat. No.,Media Condition,Comments\nRush,2112,Mercury,SRM-1-1079,VG+,Gatefold\nRush,Signals,,,,');
+  assert.deepEqual(read.ignored, []);
+  assert.deepEqual(read.items.map((item) => item.notes), ['Gatefold; Label: Mercury; Catalog number: SRM-1-1079; Condition: VG+', '']);
+  assert.equal(read.app, null);
+});
+
+// A Discogs collection export, written from memory and from the columns other projects' parsers read.
+// A real export is needed to confirm the columns and the values.
+const DISCOGS_EXPORT = [
+  'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+  'AA-1006,Steely Dan,Aja,ABC Records,"LP, Album, Gat",,1977,1234567,Uncategorized,2023-01-05 10:00:00,Very Good Plus (VG+),Very Good (VG),Signed',
+  'SRM-1-4013,Rush,Moving Pictures,Anthem,"2xLP, Album, RE, 180",5,2015-03-30,7654321,Uncategorized,2023-01-06 10:00:00,Mint (M),Generic,',
+  'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,,,',
+  'KCS 9914,Simon & Garfunkel,Bridge Over Troubled Water,Columbia,"CD, Album",,1970,2222222,Uncategorized,2023-01-08 10:00:00,,,',
+].join('\n');
+
+test('readImport reads a Discogs collection export', () => {
+  const read = S.readImport(DISCOGS_EXPORT);
+  assert.deepEqual([read.kind, read.app], ['table', 'Discogs']);
+  assert.deepEqual(read.ignored, ['Rating', 'release_id', 'CollectionFolder', 'Date Added']);
+  assert.deepEqual(read.notVinyl, ['KCS 9914, Simon & Garfunkel, Bridge Over Troubled Water, Columbia, CD, Album, 1970, 2222222, Uncategorized, 2023-01-08 10:00:00']);
+  assert.deepEqual(read.items, [
+    {
+      artist: 'Steely Dan', title: 'Aja', year: null, format: 'LP',
+      notes: 'Signed; Label: ABC Records; Catalog number: AA-1006; Pressing year: 1977; Media condition: VG+; Sleeve condition: VG',
+    },
+    {
+      artist: 'Rush', title: 'Moving Pictures', year: null, format: 'Double LP',
+      notes: 'Label: Anthem; Catalog number: SRM-1-4013; Pressing year: 2015; Media condition: M; Sleeve condition: Generic',
+    },
+    { artist: 'Nirvana', title: 'Nevermind', year: null, format: 'LP', notes: 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991' },
+  ], 'no year, so MusicBrainz fills in the original one, and the " (2)" Discogs adds to tell artists apart is gone');
+});
+
+test('readImport reads TSV and semicolon CSV, and lines without column names as a typed list', () => {
+  const tsv = S.readImport('Band\tTitle\tMedia\nPortishead\tDummy\t12"\n');
+  assert.equal(tsv.kind, 'table');
+  assert.deepEqual(tsv.items, [{ artist: 'Portishead', title: 'Dummy', year: null, format: 'LP', notes: '' }]);
+  const semicolons = S.readImport('artist;title;released\nBjörk;Debut;1993');
+  assert.deepEqual(semicolons.items, [{ artist: 'Björk', title: 'Debut', year: 1993, format: null, notes: '' }]);
+  const pasted = S.readImport('Artist\tTitle\nSteely Dan\tAja');
+  assert.deepEqual(pasted.items.map((item) => item.title), ['Aja'], 'a pasted header row is not a record');
+
+  assert.equal(S.readImport('Steely Dan - Aja\nRush - 2112').kind, 'list');
+  assert.equal(S.readImport('Steely Dan\tAja').kind, 'list', 'two pasted columns without names');
+  const commas = S.readImport('Earth, Wind & Fire - Spirit\nCrosby, Stills & Nash - CSN');
+  assert.deepEqual([commas.kind, commas.items.length], ['list', 2], 'commas in a typed list are not columns');
+  assert.equal(S.readImport('').kind, 'list');
 });
 
 const candidate = (title, extra = {}) => ({
@@ -390,14 +556,63 @@ test('addMany adds several records at once and removeMany takes them back', () =
     { artist: 'Rush', title: '2112', pendingLookup: true },
     { artist: 'Rush', title: 'Moving Pictures', pendingLookup: true },
     { artist: '', title: 'No artist' },
+    { artist: 'rush', title: 'moving pictures' },
   ]);
   assert.equal(added.length, 2);
-  assert.equal(skipped.length, 2);
+  assert.equal(skipped.length, 3, 'including a second copy of an album added a moment ago');
   assert.equal(changes, 1, 'one save for the lot');
   assert.equal(store.wishlist().length, 0, 'owning it takes it off the wishlist');
   assert.equal(store.get(added[0].id).pendingLookup, true);
   store.removeMany(added.map((record) => record.id));
   assert.deepEqual(store.all().map((record) => record.title), ['Aja']);
+});
+
+test('notInCollection keeps the albums you do not have yet, by the same rules as findCopy', () => {
+  const store = S.createStore(S.memoryStorage());
+  store.add({ artist: 'Radiohead', title: 'OK Computer', releaseGroupId: 'rg-okc' });
+  store.add({ artist: 'Weezer', title: 'Weezer' });
+  store.add({ artist: 'Bleachers', title: 'Strange Desire', releaseGroupId: 'rg-strange' });
+  store.add({ artist: 'Weezer', title: 'Pinkerton (Deluxe Edition)' });
+  const inputs = [
+    { artist: 'radiohead', title: 'ok computer' },
+    { artist: 'Radiohead', title: 'OKC', releaseGroupId: 'rg-okc' },
+    { artist: 'Weezer', title: 'Weezer', releaseGroupId: 'rg-blue' },
+    { artist: 'Bleachers', title: 'Strange Desire', releaseGroupId: 'rg-other' },
+    { artist: 'Weezer', title: 'Pinkerton' },
+    { artist: 'The Weezer', title: 'Pinkerton (Deluxe)' },
+    { artist: 'Bleachers', title: 'Strange Desire (Deluxe)', releaseGroupId: 'rg-strange' },
+  ];
+  const fresh = store.notInCollection(inputs);
+  assert.deepEqual(fresh.map((input) => input.title), ['Strange Desire', 'Pinkerton', 'Strange Desire (Deluxe)'],
+    'a typed name matches a linked record, release groups decide between linked ones, and editions never match');
+  assert.deepEqual(fresh, inputs.filter((input) => !store.findCopy(input)));
+});
+
+test('checking 1,000 imported records against 1,000 owned ones stays fast', (t) => {
+  const collection = () => {
+    const store = S.createStore(S.memoryStorage());
+    store.addMany(Array.from({ length: 1000 }, (_, i) => ({ artist: `Owned ${i}`, title: `Album ${i}`, releaseGroupId: i % 2 ? `rg-${i}` : null })));
+    return store;
+  };
+  const inputs = Array.from({ length: 1000 }, (_, i) => (i % 10 ? { artist: `New ${i}`, title: `Album ${i}` } : { artist: `owned ${i}`, title: `album ${i}` }));
+  const source = S.createStore(S.memoryStorage());
+  source.addMany(inputs);
+  const backup = S.readImport(source.exportJSON());
+  const timed = (run) => {
+    const store = collection();
+    const start = process.hrtime.bigint();
+    const result = run(store);
+    return [result, Number(process.hrtime.bigint() - start) / 1e6];
+  };
+
+  const [fresh, preview] = timed((store) => store.notInCollection(inputs));
+  const [{ added }, adding] = timed((store) => store.addMany(inputs));
+  const [merged, merging] = timed((store) => store.importBackup(backup));
+  t.diagnostic(`notInCollection ${preview.toFixed(1)} ms, addMany ${adding.toFixed(1)} ms, importBackup ${merging.toFixed(1)} ms`);
+  assert.deepEqual([fresh.length, added.length, merged.added], [900, 900, 900]);
+  for (const [name, took] of [['notInCollection', preview], ['addMany', adding], ['importBackup', merging]]) {
+    assert.ok(took < 250, `${name} took ${took.toFixed(0)} ms, where comparing every pair took over a second`);
+  }
 });
 
 test('changing the artist name drops the old MusicBrainz artist link', () => {

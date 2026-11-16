@@ -74,7 +74,7 @@
         <p class="muted">Search by artist, album or barcode and add a record in one tap.</p>
         <div class="empty-actions">
           <a class="button primary" href="#add">Add your first record</a>
-          <button type="button" class="list-import-btn">Import a list</button>
+          <button type="button" class="import-open">Import</button>
         </div>
       </div>
       <div class="empty" id="wishlist-empty" hidden>
@@ -84,10 +84,8 @@
         <a class="button primary" href="#discography">Go to Discography</a>
       </div>
       <div class="data-tools">
-        <button type="button" class="list-import-btn" id="list-import-tools">Import a list</button>
+        <button type="button" class="import-open" id="import-btn">Import</button>
         <button type="button" id="export-btn">Export backup</button>
-        <button type="button" id="import-btn">Import backup</button>
-        <input type="file" id="import-file" accept=".json,application/json" hidden>
       </div>
     </section>
 
@@ -217,26 +215,31 @@
     </form>
   </dialog>
 
-  <dialog id="list-dialog" aria-labelledby="list-heading">
-    <form method="dialog" id="list-form" class="edit-form">
-      <h2 id="list-heading" tabindex="-1" autofocus>Import a list</h2>
-      <p class="muted small list-help">Paste your list or choose a text file, one record per line with the artist, a dash, then the title: <q>Steely Dan - Aja</q>. Anything in brackets at the end, like <q>(Signed)</q>, is kept as a note, and <q>(45)</q> or <q>(Single)</q> makes it a 45. Covers, years and spellings are looked up after.</p>
-      <label class="field"><span>Your list</span><textarea name="list" rows="9" spellcheck="false" autocomplete="off" placeholder="Steely Dan - Aja&#10;Rush - Moving Pictures (Signed)&#10;Weezer - Pinkerton (Deluxe)"></textarea></label>
-      <div class="list-options">
-        <button type="button" id="list-file-btn">Choose a file</button>
-        <input type="file" id="list-file" accept=".txt,.csv,.tsv,text/plain,text/csv" hidden>
-        <label class="add-as">Add as <select name="format" id="list-format" aria-label="Format for the imported records"></select></label>
+  <dialog id="import-dialog" aria-labelledby="import-heading">
+    <form method="dialog" id="import-form" class="edit-form">
+      <h2 id="import-heading" tabindex="-1" autofocus>Import records</h2>
+      <p class="muted small import-help">Choose a backup, a text list, or an Excel or CSV spreadsheet with column names like <q>Artist</q> and <q>Album</q>. Or paste one record per line: <q>Steely Dan - Aja</q>. Add <q>(Signed)</q> for a note or <q>(45)</q> for a 45.</p>
+      <label class="field" id="import-paste"><span>Paste a list</span><textarea name="text" rows="9" spellcheck="false" autocomplete="off" placeholder="Steely Dan - Aja&#10;Rush - Moving Pictures (Signed)&#10;Weezer - Pinkerton (Deluxe)"></textarea></label>
+      <div class="import-chosen" id="import-chosen" hidden>
+        <span class="import-file-name" id="import-file-name"></span>
+        <button type="button" class="link small" id="import-paste-btn">Paste instead</button>
       </div>
-      <div class="list-summary" id="list-summary" aria-live="polite"></div>
+      <div class="import-options">
+        <button type="button" id="import-file-btn">Choose a file</button>
+        <input type="file" id="import-file" accept=".json,.txt,.csv,.tsv,.xlsx,.xls,.numbers,application/json,text/plain,text/csv,text/tab-separated-values" hidden>
+        <label class="add-as" id="import-format-field">Add as <select name="format" id="import-format" aria-label="Format for the imported records"></select></label>
+      </div>
+      <div class="import-summary" id="import-summary" aria-live="polite"></div>
       <div class="dialog-actions">
-        <button value="import" class="primary" id="list-submit" disabled>Add records</button>
-        <button type="button" id="list-cancel">Cancel</button>
+        <button value="import" class="primary" id="import-submit" disabled>Add records</button>
+        <button type="button" id="import-cancel">Cancel</button>
       </div>
     </form>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="js/xlsx.js"></script>
   <script src="js/store.js"></script>
   <script src="js/musicbrainz.js"></script>
   <script src="js/app.js"></script>
