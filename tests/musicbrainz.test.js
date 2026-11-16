@@ -250,92 +250,6 @@ test('a cancelled search never reaches MusicBrainz', async (t) => {
   assert.equal(fetchMock.mock.callCount(), 0);
 });
 
-test('getDiscography marks vinyl albums and finds deluxe editions', async (t) => {
-  const calls = [];
-  const release = (id, group, { status = 'Official', title = `Title ${group.slice(1)}`, note = '', date = '' }, ...formats) => ({
-    id, status, title, disambiguation: note, date, 'release-group': { id: group }, media: formats.map((format) => ({ format })),
-  });
-  const vinylReleases = [
-    release('r1', 'g0', {}, '12" Vinyl', '12" Vinyl'),
-    release('r2', 'g0', {}, '7" Vinyl'),
-    release('r3', 'g1', { status: 'Bootleg' }, '12" Vinyl'), // bootlegs don't count
-    release('r4', 'g2', {}, 'CD'), // a non-vinyl match is ignored
-    release('r5', 'g3', {}, 'Flexi-disc'), // flexi-discs don't count
-    release('r6', 'g4', {}, 'VinylDisc'), // a CD/vinyl hybrid isn't a vinyl pressing
-    release('r7', 'g5', { status: 'Promotion' }, 'CD', 'Vinyl'),
-    release('r8', 'g6', { title: 'Title 6 (Deluxe Edition)' }, '12" Vinyl'), // an album that is itself a deluxe edition
-    release('r9', 'g7', { note: 'deluxe edition' }, '12" Vinyl'), // only the deluxe is on vinyl
-    release('r14', 'g8', {}, '10" Vinyl'), // only on a 10"
-  ];
-  const deluxeReleases = [
-    release('r9', 'g7', { note: 'deluxe edition', date: '2010-11-02' }, '12" Vinyl'),
-    release('r10', 'g7', { note: '2010 Deluxe Edition', date: '2010-11-01' }, 'CD', 'CD'),
-    release('r11', 'g8', { title: 'Title 8 (Expanded Edition)', date: '2004' }, 'CD'),
-    release('r12', 'g6', { title: 'Title 6 (Deluxe Edition)' }, '12" Vinyl'),
-    release('r13', 'g9', { status: 'Bootleg', note: 'deluxe' }, '12" Vinyl'),
-  ];
-  t.mock.method(globalThis, 'fetch', async (url) => {
-    const u = new URL(url);
-    calls.push(u);
-    const offset = Number(u.searchParams.get('offset'));
-    if (u.pathname === '/ws/2/release-group') {
-      const size = offset === 0 ? 100 : 20;
-      return jsonResponse({
-        'release-group-count': 120,
-        'release-groups': Array.from({ length: size }, (_, i) => ({
-          id: `g${offset + i}`, title: offset + i === 6 ? 'Title 6 (Deluxe Edition)' : `Title ${offset + i}`, 'primary-type': 'Album',
-        })),
-      });
-    }
-    const releases = u.searchParams.get('query').includes('format:') ? vinylReleases : deluxeReleases;
-    return jsonResponse({ count: releases.length, releases });
-  });
-  const progress = [];
-  const result = await mb.getDiscography('a1', (step) => progress.push(step));
-
-  assert.deepEqual(calls.map((u) => `${u.pathname}@${u.searchParams.get('offset')}`),
-    ['/ws/2/release-group@0', '/ws/2/release-group@100', '/ws/2/release@0', '/ws/2/release@0']);
-  assert.equal(calls[2].searchParams.get('query'), 'arid:"a1" AND format:(vinyl OR 12vinyl OR 7vinyl OR 10vinyl)', 'every size, so the 45s and 10" setting needs no reload');
-  assert.equal(calls[3].searchParams.get('query'), 'arid:"a1" AND (release:(deluxe OR expanded) OR comment:(deluxe OR expanded))');
-  assert.deepEqual(progress, [
-    { step: 'releases', loaded: 100, total: 120 },
-    { step: 'releases', loaded: 120, total: 120 },
-    { step: 'vinyl', loaded: 10, total: 10 },
-    { step: 'deluxe', loaded: 5, total: 5 },
-  ]);
-  assert.equal(result.groups.length, 120);
-  assert.deepEqual(result.groups.slice(0, 10).map((g) => g.vinyl),
-    [true, false, false, false, false, true, true, false, false, false], 'LP or 12" pressings');
-  assert.deepEqual(result.groups.slice(0, 10).map((g) => g.small),
-    [true, false, false, false, false, false, false, false, true, false], '45 or 10" pressings');
-  assert.deepEqual(result.groups[7].deluxe, { title: 'Title 7 (Deluxe Edition)', date: '2010-11-01', vinyl: true, small: false, releaseIds: ['r9', 'r10'] });
-  assert.deepEqual(result.groups[8].deluxe, { title: 'Title 8 (Expanded Edition)', date: '2004', vinyl: false, small: false, releaseIds: ['r11'] });
-  assert.equal(result.groups[6].deluxe, null, 'an album that is already a deluxe edition gets no second deluxe line');
-  assert.equal(result.groups[9].deluxe, null, 'bootleg deluxe editions do not count');
-  assert.equal(result.truncated, false);
-  assert.equal(result.vinylComplete, true);
-});
-
-// Answers release searches the way MusicBrainz does, including its limit of 500 results per query.
-function fakeReleaseSearch(all) {
-  const calls = [];
-  const fetch = async (url) => {
-    const u = new URL(url);
-    const query = u.searchParams.get('query');
-    calls.push(query.replace(/^arid:"a1" AND format:\([^)]*\)/, ''));
-    const offset = Number(u.searchParams.get('offset'));
-    const limit = Number(u.searchParams.get('limit'));
-    if (offset + limit > 500) return jsonResponse({ error: `Must retrieve at most 500 search results, not ${offset + limit}.` }, 400);
-    const range = /date:\[(\S+) TO (\S+)\]/.exec(query);
-    const year = (r) => Number(r.date.slice(0, 4));
-    const matches = query.includes('NOT date:[* TO *]') ? all.filter((r) => !r.date)
-      : range ? all.filter((r) => r.date && (range[1] === '*' || year(r) >= Number(range[1])) && (range[2] === '*' || year(r) <= Number(range[2])))
-        : all;
-    return jsonResponse({ count: matches.length, releases: matches.slice(offset, offset + limit) });
-  };
-  return { calls, fetch };
-}
-
 // The one-request-a-second queue's pauses end straight away, so these tests don't take half a minute.
 function skipTheWait(t) {
   const waits = [];
@@ -350,44 +264,154 @@ function skipTheWait(t) {
 const MIN_GAP_MS = 1100;
 const retryWaits = (waits) => waits.filter((ms) => ms > MIN_GAP_MS).map((ms) => ms / 1000);
 
-const pressings = (count, date, from = 0) => Array.from({ length: count }, (_, i) => ({
-  id: `r${from + i}`, status: 'Official', date, title: 'T', 'release-group': { id: `g${(from + i) % 50}` }, media: [{ format: '12" Vinyl' }],
-}));
-
-test('an artist with more vinyl than one search returns is searched year by year', async (t) => {
-  const all = [...pressings(400, '1965-03-01'), ...pressings(380, '1969', 400), ...pressings(300, '2015-05-05', 780), ...pressings(20, '', 1080)];
-  const fake = fakeReleaseSearch(all);
-  t.mock.method(globalThis, 'fetch', fake.fetch);
-  t.mock.method(Date.prototype, 'getFullYear', () => 2026);
-  skipTheWait(t);
-  const progress = [];
-  const { releases, complete } = await mb.internals.searchArtistReleases('a1', 'format:(vinyl OR 12vinyl)', (loaded, total) => progress.push([loaded, total]));
-  assert.equal(releases.length, 1100, 'every pressing, once');
-  assert.equal(complete, true);
-  assert.deepEqual(fake.calls.filter((query, i) => fake.calls.indexOf(query) === i), [
-    '', // 1,100: too many
-    ' AND NOT date:[* TO *]', // the 20 with no date
-    ' AND date:[* TO *]', // 1,080
-    ' AND date:[* TO 1963]', // none
-    ' AND date:[1964 TO *]', // 1,080
-    ' AND date:[1964 TO 1995]', // 780
-    ' AND date:[1964 TO 1979]', // 780
-    ' AND date:[1964 TO 1971]', // 780
-    ' AND date:[1964 TO 1967]', // 400
-    ' AND date:[1968 TO 1971]', // 380
-    ' AND date:[1972 TO 1979]', // none
-    ' AND date:[1980 TO 1995]', // none
-    ' AND date:[1996 TO *]', // 300
-  ]);
-  assert.deepEqual(progress.at(-1), [1100, 1100]);
+// A release group, and a release as the release browse returns it with inc=media+release-groups.
+const albumGroup = (id, { title = `Title ${id.slice(1)}`, type = 'Album', secondary = [], date = '2000' } = {}) => ({
+  id, title, 'primary-type': type, 'secondary-types': secondary, 'first-release-date': date,
+});
+const browsed = (id, group, { status = 'Official', title = group.title, note = '', date = '' } = {}, ...formats) => ({
+  id, status, title, disambiguation: note, date, 'release-group': group, media: formats.map((format) => ({ format })),
 });
 
-test('a single year with more than one search returns keeps the first 500 and says so', async (t) => {
-  t.mock.method(globalThis, 'fetch', fakeReleaseSearch(pressings(700, '1970-01-01')).fetch);
+/*
+ * Answers like MusicBrainz: the studio album search, the release group browse and the release
+ * browse, which pages in a fixed order and keeps only the statuses asked for. Searching for
+ * releases returns results that tie on score in a new order every time, as the real one does, and
+ * at most 500 of them. pageSize makes the browse return fewer than asked, to show paging by count.
+ */
+function fakeDiscographyServer({ groups, studio = groups.filter((g) => g['primary-type'] === 'Album' && !g['secondary-types'].length), releases, pageSize = 100 }) {
+  const calls = [];
+  let seed = 7;
+  const random = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const fetch = async (url) => {
+    const u = new URL(url);
+    calls.push(u);
+    const params = u.searchParams;
+    const offset = Number(params.get('offset') || 0);
+    const limit = Math.min(Number(params.get('limit') || 25), pageSize);
+    if (u.pathname === '/ws/2/release-group' && params.get('artist')) {
+      return jsonResponse({ 'release-group-count': groups.length, 'release-groups': groups.slice(offset, offset + limit) });
+    }
+    if (u.pathname === '/ws/2/release-group') {
+      return jsonResponse({ count: studio.length, 'release-groups': studio.slice(0, Number(params.get('limit'))) });
+    }
+    if (params.get('artist')) {
+      const statuses = (params.get('status') || '').split('|');
+      const kept = releases.filter((r) => !params.get('status') || statuses.includes((r.status || '').toLowerCase()));
+      return jsonResponse({ 'release-count': kept.length, releases: kept.slice(offset, offset + limit) });
+    }
+    if (offset + limit > 500) return jsonResponse({ error: `Must retrieve at most 500 search results, not ${offset + limit}.` }, 400);
+    const query = params.get('query');
+    const found = releases.filter((r) => (query.includes('format:') ? formatsOfFake(r).some((f) => /Vinyl$/.test(f)) : /deluxe|expanded/i.test(`${r.title} ${r.disambiguation}`)));
+    const shuffled = found.map((r) => [random(), r]).sort((a, b) => a[0] - b[0]).map(([, r]) => r);
+    return jsonResponse({ count: found.length, releases: shuffled.slice(offset, offset + limit) });
+  };
+  return { calls, fetch };
+}
+const formatsOfFake = (release) => (release.media || []).map((m) => m.format);
+
+test('getDiscography shows studio albums first, then marks vinyl and finds deluxe editions in the browsed releases', async (t) => {
+  const g = Array.from({ length: 10 }, (_, i) => albumGroup(`g${i}`, i === 6 ? { title: 'Title 6 (Deluxe Edition)' } : i === 1 ? { secondary: ['Live'] } : {}));
+  const releases = [
+    browsed('r1', g[0], {}, '12" Vinyl', '12" Vinyl'),
+    browsed('r2', g[0], {}, '7" Vinyl'),
+    browsed('r3', g[1], { status: 'Bootleg' }, '12" Vinyl'), // bootlegs don't count
+    browsed('r4', g[2], {}, 'CD'),
+    browsed('r5', g[3], {}, 'Flexi-disc'), // flexi-discs don't count
+    browsed('r6', g[4], {}, 'VinylDisc'), // a CD/vinyl hybrid isn't a vinyl pressing
+    browsed('r7', g[5], { status: 'Promotion' }, 'CD', 'Vinyl'),
+    browsed('r8', g[6], {}, '12" Vinyl'), // an album that is itself a deluxe edition
+    browsed('r9', g[7], { note: 'deluxe edition', date: '2010-11-02' }, '12" Vinyl'), // only the deluxe is on vinyl
+    browsed('r10', g[7], { note: '2010 Deluxe Edition', date: '2010-11-01' }, 'CD', 'CD'),
+    browsed('r11', g[8], { title: 'Title 8 (Expanded Edition)', date: '2004' }, 'CD'),
+    browsed('r12', g[8], {}, '10" Vinyl'), // only on a 10"
+    browsed('r13', g[9], { status: 'Bootleg', note: 'deluxe' }, '12" Vinyl'),
+    browsed('r14', g[9], { status: null }, '12" Vinyl'), // no status in MusicBrainz: doesn't count
+  ];
+  const fake = fakeDiscographyServer({ groups: g, releases, pageSize: 5 });
+  t.mock.method(globalThis, 'fetch', fake.fetch);
   skipTheWait(t);
-  const { releases, complete } = await mb.internals.searchArtistReleases('a1', 'format:(vinyl OR 12vinyl)');
-  assert.equal(releases.length, 500);
-  assert.equal(complete, false);
+  const progress = [];
+  const result = await mb.getDiscography('a1', (p) => progress.push(p));
+
+  assert.deepEqual(fake.calls.map((u) => `${u.pathname}@${u.searchParams.get('offset') || 0}`),
+    ['/ws/2/release-group@0', '/ws/2/release@0', '/ws/2/release@5', '/ws/2/release@10']);
+  assert.equal(fake.calls[0].searchParams.get('query'), 'arid:"a1" AND primarytype:album AND NOT secondarytype:[* TO *]');
+  const browse = fake.calls[1].searchParams;
+  assert.deepEqual([browse.get('artist'), browse.get('type'), browse.get('status'), browse.get('inc')],
+    ['a1', 'album|ep|single', 'official|promotion', 'media+release-groups'], 'every size, so the 45s and 10" setting needs no reload');
+
+  assert.deepEqual(progress.map(({ step, loaded, total }) => [step, loaded, total]),
+    [['studio', 9, 9], ['vinyl', 5, 11], ['vinyl', 10, 11], ['vinyl', 11, 11]]);
+  const first = progress[0].discography;
+  assert.deepEqual(first.groups.map((group) => group.id), ['g0', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8', 'g9'], 'the studio albums, before any vinyl is known');
+  assert.ok(first.groups.every((group) => !group.vinyl && !group.small && !group.deluxe));
+
+  const byId = new Map(result.groups.map((group) => [group.id, group]));
+  const flags = (key) => ['g0', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8', 'g9'].map((id) => Boolean(byId.get(id) && byId.get(id)[key]));
+  assert.deepEqual(flags('vinyl'), [true, false, false, false, false, true, true, false, false, false], 'LP or 12" pressings');
+  assert.deepEqual(flags('small'), [true, false, false, false, false, false, false, false, true, false], '45 or 10" pressings');
+  assert.equal(byId.has('g1'), false, 'a group with only bootlegs waits for Vinyl only to be turned off');
+  assert.deepEqual(byId.get('g7').deluxe, { title: 'Title 7 (Deluxe Edition)', date: '2010-11-01', vinyl: true, small: false, releaseIds: ['r9', 'r10'] });
+  assert.deepEqual(byId.get('g8').deluxe, { title: 'Title 8 (Expanded Edition)', date: '2004', vinyl: false, small: false, releaseIds: ['r11'] });
+  assert.equal(byId.get('g6').deluxe, null, 'an album that is already a deluxe edition gets no second deluxe line');
+  assert.equal(byId.get('g9').deluxe, null, 'bootleg deluxe editions do not count');
+  assert.deepEqual([result.total, result.truncated, result.vinylComplete, result.allGroups], [9, false, true, false]);
+});
+
+// Searching for vinyl and paging through the results used to lose about a fifth of the pressings,
+// because MusicBrainz returns results that tie on score in a different order on every page.
+test('getDiscography finds every pressing, though search results come back in a new order each time', async (t) => {
+  const groups = Array.from({ length: 300 }, (_, i) => albumGroup(`g${i}`, { type: 'Single' }));
+  const releases = groups.map((group, i) => browsed(`r${i}`, group, {}, '12" Vinyl'));
+  const fake = fakeDiscographyServer({ groups, releases, studio: [] });
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  skipTheWait(t);
+  const result = await mb.getDiscography('a1');
+  assert.equal(result.groups.filter((group) => group.vinyl).length, 300, 'every single has its pressing');
+});
+
+test('an artist with more studio albums than one search page holds gets every group browsed first', async (t) => {
+  const groups = Array.from({ length: 150 }, (_, i) => albumGroup(`g${i}`));
+  const releases = [browsed('r1', groups[149], {}, '12" Vinyl')];
+  const fake = fakeDiscographyServer({ groups, releases });
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  skipTheWait(t);
+  const progress = [];
+  const result = await mb.getDiscography('a1', (p) => progress.push([p.step, p.loaded, p.total]));
+  assert.deepEqual(fake.calls.map((u) => `${u.pathname}@${u.searchParams.get('offset') || 0}`),
+    ['/ws/2/release-group@0', '/ws/2/release-group@0', '/ws/2/release-group@100', '/ws/2/release@0']);
+  assert.deepEqual(progress, [['groups', 100, 150], ['groups', 150, 150], ['vinyl', 1, 1]]);
+  assert.equal(result.groups.length, 150);
+  assert.equal(result.groups[149].vinyl, true);
+  assert.deepEqual([result.total, result.truncated, result.allGroups], [150, false, true]);
+});
+
+test('addAllReleaseGroups adds the groups with no official release and keeps what was found', async (t) => {
+  const groups = [albumGroup('g0'), albumGroup('g1', { secondary: ['Live'] }), albumGroup('g2', { type: 'Single' })];
+  const fake = fakeDiscographyServer({ groups, releases: [] });
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  skipTheWait(t);
+  const before = { groups: [{ id: 'g0', title: 'Title 0', vinyl: true, small: false, deluxe: null }], total: 1, truncated: false, vinylComplete: true, allGroups: false };
+  const progress = [];
+  const after = await mb.addAllReleaseGroups(before, 'a1', (p) => progress.push(p));
+  assert.deepEqual(after.groups.map((group) => [group.id, group.vinyl]), [['g0', true], ['g1', false], ['g2', false]]);
+  assert.deepEqual([after.total, after.truncated, after.vinylComplete, after.allGroups], [3, false, true, true]);
+  assert.deepEqual(progress, [{ step: 'groups', loaded: 3, total: 3 }]);
+  assert.equal(before.groups.length, 1, 'the discography passed in is left as it was');
+});
+
+test('a discography load that is cancelled stops asking MusicBrainz', async (t) => {
+  const groups = [albumGroup('g0')];
+  const fake = fakeDiscographyServer({ groups, releases: [browsed('r1', groups[0], {}, '12" Vinyl')] });
+  t.mock.method(globalThis, 'fetch', fake.fetch);
+  skipTheWait(t);
+  const controller = new AbortController();
+  const pending = mb.getDiscography('a1', ({ step }) => step === 'studio' && controller.abort(), { signal: controller.signal });
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(fake.calls.length, 1, 'the release browse never went out');
 });
 
 test('a burst of 503s is waited out, longer each time', async (t) => {
@@ -414,19 +438,20 @@ test('a dropped connection is tried again, including one cut off partway through
   assert.deepEqual(retryWaits(waits), [2, 4]);
 });
 
-test('a big vinyl search rides out 503s and dropped connections', async (t) => {
-  const fake = fakeReleaseSearch([...pressings(400, '1965-03-01'), ...pressings(380, '1969', 400), ...pressings(300, '2015-05-05', 780)]);
+test('a long discography load rides out 503s and dropped connections', async (t) => {
+  const groups = Array.from({ length: 250 }, (_, i) => albumGroup(`g${i}`, { type: 'Single' }));
+  const fake = fakeDiscographyServer({ groups, releases: groups.map((group, i) => browsed(`r${i}`, group, {}, '7" Vinyl')), studio: [] });
   let call = 0;
   t.mock.method(globalThis, 'fetch', async (url) => {
     call += 1;
-    if ([3, 4, 5].includes(call)) return jsonResponse({}, 503);
-    if (call === 9) throw new TypeError('Failed to fetch');
+    if ([2, 3, 4].includes(call)) return jsonResponse({}, 503);
+    if (call === 6) throw new TypeError('Failed to fetch');
     return fake.fetch(url);
   });
   const waits = skipTheWait(t);
-  const { releases, complete } = await mb.internals.searchArtistReleases('a1', 'format:(vinyl OR 12vinyl)');
-  assert.equal(releases.length, 1080);
-  assert.equal(complete, true);
+  const result = await mb.getDiscography('a1');
+  assert.equal(result.groups.filter((group) => group.small).length, 250);
+  assert.equal(result.vinylComplete, true);
   assert.deepEqual(retryWaits(waits), [2, 4, 8, 2]);
 });
 

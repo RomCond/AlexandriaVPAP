@@ -302,20 +302,35 @@ test('a store without storage still works for the visit', () => {
   assert.equal(store.all().length, 1);
 });
 
-test('discography cache expires after a week', (t) => {
-  const store = S.createStore(S.memoryStorage());
+test('a saved discography goes stale after a week and is dropped after four', (t) => {
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
   store.saveDiscography('a1', { name: 'Radiohead', groups: [] });
   assert.equal(store.getDiscography('a1').name, 'Radiohead');
+  assert.equal(store.discographyStale(store.getDiscography('a1')), false);
   const now = Date.now();
-  t.mock.method(Date, 'now', () => now + 8 * 24 * 60 * 60 * 1000);
+  const day = 24 * 60 * 60 * 1000;
+  const clock = t.mock.method(Date, 'now', () => now + 8 * day);
+  assert.equal(store.getDiscography('a1').name, 'Radiohead', 'still shown while a new copy loads');
+  assert.equal(store.discographyStale(store.getDiscography('a1')), true);
+  clock.mock.mockImplementation(() => now + 29 * day);
   assert.equal(store.getDiscography('a1'), null);
+  store.saveDiscography('a2', { name: 'Portishead', groups: [] });
+  assert.deepEqual(Object.keys(JSON.parse(storage.getItem(S.KEYS.discographies))), ['a2'], 'saving clears out copies older than four weeks');
+});
+
+test('saving a discography keeps the time it was fetched, when it has one', () => {
+  const store = S.createStore(S.memoryStorage());
+  const fetchedAt = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  assert.equal(store.saveDiscography('a1', { name: 'Radiohead', groups: [], fetchedAt }).fetchedAt, fetchedAt);
 });
 
 test('discographies cached under older rules are cleared', () => {
   const storage = S.memoryStorage();
-  for (const v of [1, 2, 3]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
+  for (const v of [1, 2, 3, 4, 5]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
   S.createStore(storage);
-  for (const v of [1, 2, 3]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
+  for (const v of [1, 2, 3, 4, 5]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
+  assert.equal(S.KEYS.discographies, 'recordcatalog.discographies.v6');
 });
 
 test('categoryOf sorts release groups into filter buckets', () => {
