@@ -33,42 +33,47 @@ const DISCOGRAPHIES = {
     rg('rg-amnesiac', 'Amnesiac', '2001-06-04'),
     rg('rg-creep', 'Creep', '1992-09-21', 'Single'),
     rg('rg-wrong', 'I Might Be Wrong: Live Recordings', '2001-11-12', 'Album', ['Live']),
+    rg('rg-glasto', 'Live at Glastonbury 1997', '1997-06-28', 'Album', ['Live']),
   ],
   'a-portishead': [
     rg('rg-dummy', 'Dummy', '1994-08-22'),
     rg('rg-portishead', 'Portishead', '1997-09-29'),
     rg('rg-third', 'Third', '2008-04-28'),
   ],
+  'a-takanaka': [
+    rg('rg-seychelles', 'Seychelles', '1976-07-25'),
+    rg('rg-goblins', '虹伝説 THE RAINBOW GOBLINS', '1981-04-25'),
+  ],
 };
 
-// Answers to the "vinyl releases by this artist" search. Pablo Honey only has a bootleg
-// and a CD that slipped into the results, and the live album only a flexi-disc,
-// so neither should count as having a vinyl pressing.
-const vinylRelease = (group, format, status = 'Official') => ({ status, 'release-group': { id: group }, media: [{ format }] });
-const VINYL_RELEASES = {
-  'a-radiohead': [
-    vinylRelease('rg-pablo', '12" Vinyl', 'Bootleg'),
-    vinylRelease('rg-pablo', 'CD'),
-    vinylRelease('rg-bends', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-kida', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl', 'Promotion'),
-    vinylRelease('rg-creep', '7" Vinyl'),
-    vinylRelease('rg-wrong', 'Flexi-disc'),
-  ],
-  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => vinylRelease(id, '12" Vinyl')),
+// The artists' releases, as browsing them with inc=media+release-groups returns them. Pablo Honey
+// only has a bootleg LP and a CD, and the live album only a flexi-disc, so neither counts as having
+// a vinyl pressing. The Bends has a deluxe edition on vinyl; Kid A's is CD only, so it only shows
+// with Vinyl only turned off. The Glastonbury recording only exists as a bootleg, so it isn't
+// among these at all, and only loads once Vinyl only is turned off.
+const pressing = (artistId, id, groupId, format, extra = {}) => {
+  const group = DISCOGRAPHIES[artistId].find((g) => g.id === groupId);
+  const formats = Array.isArray(format) ? format : [format];
+  return { id, status: 'Official', title: group.title, date: group['first-release-date'], 'release-group': group, media: formats.map((f) => ({ format: f })), ...extra };
 };
-
-// Answers to the "deluxe or expanded releases by this artist" search. The Bends has a deluxe
-// edition on vinyl; Kid A's is CD only, so it only shows with Vinyl only turned off.
-const DELUXE_RELEASES = {
+const RELEASES = {
   'a-radiohead': [
-    { id: 'rel-bends-dlx', title: 'The Bends', disambiguation: 'collector’s deluxe edition', date: '2009-03-24', status: 'Official', 'release-group': { id: 'rg-bends' }, media: [{ format: '12" Vinyl' }, { format: '12" Vinyl' }] },
-    { id: 'rel-kida-dlx', title: 'Kid A (Expanded Edition)', date: '2016-05-06', status: 'Official', 'release-group': { id: 'rg-kida' }, media: [{ format: 'CD' }] },
+    pressing('a-radiohead', 'rel-pablo-boot', 'rg-pablo', '12" Vinyl', { status: 'Bootleg' }),
+    pressing('a-radiohead', 'rel-pablo-cd', 'rg-pablo', 'CD'),
+    pressing('a-radiohead', 'rel-bends', 'rg-bends', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-bends-dlx', 'rg-bends', ['12" Vinyl', '12" Vinyl'], { disambiguation: 'collector’s deluxe edition', date: '2009-03-24' }),
+    pressing('a-radiohead', 'rel-okc', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-okc-2', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-kida', 'rg-kida', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-kida-dlx', 'rg-kida', 'CD', { title: 'Kid A (Expanded Edition)', date: '2016-05-06' }),
+    pressing('a-radiohead', 'rel-amnesiac-10', 'rg-amnesiac', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac', 'rg-amnesiac', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac-promo', 'rg-amnesiac', '12" Vinyl', { status: 'Promotion' }),
+    pressing('a-radiohead', 'rel-creep', 'rg-creep', '7" Vinyl'),
+    pressing('a-radiohead', 'rel-wrong', 'rg-wrong', 'Flexi-disc'),
+    pressing('a-radiohead', 'rel-glasto', 'rg-glasto', '12" Vinyl', { status: 'Bootleg' }),
   ],
+  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => pressing('a-portishead', `rel-${id}`, id, '12" Vinyl')),
 };
 
 // Answers to the album lookups for an imported list, by the title searched for. "Weezer" is two
@@ -93,10 +98,24 @@ function fakeMusicBrainz(url) {
     const title = /releasegroup:"([^"]+)"/.exec(query)[1];
     return { 'release-groups': ALBUM_LOOKUPS[title] || [] };
   }
-  if (url.pathname === '/ws/2/release' && query.startsWith('arid:')) {
-    const artistId = /arid:"([^"]+)"/.exec(query)[1];
-    const releases = (query.includes('format:') ? VINYL_RELEASES : DELUXE_RELEASES)[artistId] || [];
-    return { count: releases.length, offset: 0, releases };
+  if (url.pathname === '/ws/2/release-group' && query.includes('NOT secondarytype:')) {
+    const albums = (DISCOGRAPHIES[/arid:"([^"]+)"/.exec(query)[1]] || []).filter((g) => g['primary-type'] === 'Album' && !g['secondary-types'].length);
+    return { count: albums.length, 'release-groups': albums };
+  }
+  if (url.pathname === '/ws/2/release' && params.get('artist')) {
+    const statuses = (params.get('status') || '').split('|');
+    const releases = (RELEASES[params.get('artist')] || []).filter((r) => !params.get('status') || statuses.includes(r.status.toLowerCase()));
+    return { 'release-count': releases.length, 'release-offset': 0, releases };
+  }
+  if (url.pathname === '/ws/2/release' && query.includes('takanaka')) {
+    // MusicBrainz files him as 高中正義, and the sleeve credits Masayoshi Takanaka.
+    const group = { id: 'rg-goblins', title: '虹伝説 THE RAINBOW GOBLINS', 'primary-type': 'Album', 'secondary-types': [] };
+    return {
+      releases: [{
+        id: 'rel-goblins', status: 'Official', score: 100, title: group.title, date: '1981-04-25', 'release-group': group,
+        'artist-credit': [{ name: 'Masayoshi Takanaka', artist: { id: 'a-takanaka', name: '高中正義' } }], media: [{ format: '12" Vinyl' }],
+      }],
+    };
   }
   if (url.pathname === '/ws/2/release' && !query.startsWith('barcode:')) {
     // Typed search: vinyl pressings, grouped into albums by the app. Two pressings of OK Computer
@@ -184,9 +203,11 @@ function fakeCover(id) {
 async function openApp(browser, options = {}) {
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, ...options });
   const mbCalls = [];
-  await context.route('https://musicbrainz.org/**', (route) => {
+  const hold = { browse: null };
+  await context.route('https://musicbrainz.org/**', async (route) => {
     const url = new URL(route.request().url());
     mbCalls.push(url);
+    if (hold.browse && url.pathname === '/ws/2/release' && url.searchParams.get('artist')) await hold.browse;
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -214,7 +235,7 @@ async function openApp(browser, options = {}) {
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) errors.push(msg.text());
   });
   await page.goto(PAGE_URL);
-  return { context, page, errors, mbCalls, coverCalls };
+  return { context, page, errors, mbCalls, coverCalls, hold };
 }
 
 async function shot(page, name) {
@@ -239,6 +260,10 @@ async function openTab(page, route) {
   }, route);
 }
 
+// The discography shows as soon as its studio albums are in, then again as each page of releases
+// arrives. This waits for the last of it.
+const discoReady = (page) => page.locator('#disco-panel[aria-busy="false"]').waitFor();
+
 async function assertNoJunkText(page, where) {
   const shown = await page.locator('main').innerText();
   assert.doesNotMatch(shown, /\b(null|undefined|NaN)\b/, `stray placeholder text on ${where}`);
@@ -247,7 +272,7 @@ async function assertNoJunkText(page, where) {
 test('add, browse, edit, shuffle and find missing records', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
-    const { context, page, errors, mbCalls, coverCalls } = await openApp(browser);
+    const { context, page, errors, mbCalls, coverCalls, hold } = await openApp(browser);
 
     // Empty shelf
     assert.ok(await page.locator('#collection-empty').isVisible());
@@ -263,6 +288,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(typedSearches.length, 1, `typing sent ${typedSearches.length} searches`);
     assert.match(typedSearches[0].searchParams.get('query'), /artist:\(radiohead ok comp comp\*\)/);
     assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.equal(await text(page, '#search-results .artist-row'), 'Radiohead · Artist · See all albums', 'the artist typed gets a row above the albums');
     await page.locator('#search-results .result').first().getByRole('button', { name: 'Add' }).click();
     await page.locator('#toast.show', { hasText: 'Added OK Computer' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '1');
@@ -384,12 +410,17 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').classList.contains('has-album'));
     assert.match(await albumTint(), /^hsl\(/);
     await page.selectOption('#random-artist', '');
-    // Kid A is the only Double LP, and it has a cover: the big pick uses the 1200px version
+    // Kid A is the only Double LP, and it has a cover. The list above already loaded its 500px cover,
+    // so the pick shows that at once without asking for it again, then lays the 1200px cover over it.
     await page.selectOption('#random-format', 'Double LP');
+    const kidA500 = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-500')).length;
+    const kidA500Before = kidA500();
+    assert.ok(kidA500Before > 0, 'the list loaded the 500px cover');
     await page.click('#spin-btn');
     assert.equal(await text(page, '.pick-title'), 'Kid A');
-    await page.locator('#spin-sleeve .cover.loaded').waitFor();
-    assert.ok(coverCalls.some((url) => url.endsWith('/rg-kida/front-1200')));
+    assert.equal(await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-500"]').count(), 1, 'the 500px cover shows at once');
+    await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-1200"]').waitFor();
+    assert.equal(kidA500(), kidA500Before, 'the 500px cover came from memory');
     // Kid A has a cover, so the card fades down from the cover's main color
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
     const [r, g, b] = (await albumTint()).match(/\d+/g).map(Number);
@@ -410,9 +441,19 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     // Discography from a record in the collection: Radiohead already has a MusicBrainz id
     await openTab(page, 'collection');
     await page.locator('.record', { hasText: 'OK Computer' }).click();
+    // The studio albums show at once. Until every release has been checked for vinyl, none says
+    // "Vinyl not confirmed". Holding back the release browse keeps the page in that state.
+    let letBrowseThrough;
+    hold.browse = new Promise((resolve) => { letBrowseThrough = resolve; });
     await page.click('#edit-discography');
-    await page.locator('#disco-panel').waitFor();
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
     assert.equal(await text(page, '#disco-name'), 'Radiohead');
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 5');
+    assert.equal(await text(page, '#disco-missing'), 'Pablo Honey\n1993 · Album\nWishlist\nGot it\nAmnesiac\n2001 · Album\nWishlist\nGot it');
+    assert.match(await text(page, '#artist-status'), /Checking which releases came out on vinyl/);
+    hold.browse = null;
+    letBrowseThrough();
+    await discoReady(page);
     // Vinyl only is on by default. Pablo Honey has no official vinyl in MusicBrainz, but it's a studio
     // album, so it's listed anyway as "Vinyl not confirmed". The Bends has a deluxe edition on vinyl,
     // which gets its own line right after the original.
@@ -429,8 +470,13 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await assertNoJunkText(page, 'discography');
     await shot(page, '06-discography');
 
-    // Turning it off shows everything, including the CD-only expanded edition
+    // Turning it off shows everything, including the CD-only expanded edition. It also loads the
+    // albums with no official release, like the bootleg Glastonbury recording, so Live counts two.
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
+    await page.locator('.toggle', { hasText: 'Live' }).locator('.toggle-count', { hasText: '2' }).waitFor();
+    await discoReady(page);
+    assert.equal(mbCalls.at(-1).pathname, '/ws/2/release-group');
+    assert.equal(mbCalls.at(-1).searchParams.get('artist'), 'a-radiohead');
     assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 7');
     assert.match(await text(page, '#disco-missing'), /Kid A \(Expanded Edition\)\n2016 · Album\nVinyl not confirmed\nConfirm/);
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
@@ -512,8 +558,9 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     const callsBefore = mbCalls.length;
     await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
     await page.locator('#disco-name', { hasText: 'Portishead' }).waitFor();
+    await discoReady(page);
     assert.equal(await text(page, '#disco-progress-text'), 'You have 1 of 3');
-    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release', '/ws/2/release']);
+    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release']);
     const linked = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.title === 'Dummy').artistId);
     assert.equal(linked, 'a-portishead');
 
@@ -530,6 +577,28 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
     assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
 
+    // A saved copy more than a week old still shows at once, while a new one loads behind it
+    await page.evaluate((key) => {
+      const saved = JSON.parse(localStorage.getItem(key));
+      saved['a-radiohead'].fetchedAt -= 10 * 24 * 60 * 60 * 1000;
+      localStorage.setItem(key, JSON.stringify(saved));
+    }, 'recordcatalog.discographies.v6');
+    await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
+    await discoReady(page);
+    let letRefreshThrough;
+    hold.browse = new Promise((resolve) => { letRefreshThrough = resolve; });
+    await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+    assert.match(await text(page, '#disco-updated'), /Updated 10 days ago/);
+    assert.match(await text(page, '#disco-missing'), /Pablo Honey\n1993 · Album\nVinyl not confirmed/, 'the saved copy keeps its labels');
+    assert.match(await text(page, '#artist-status'), /Checking MusicBrainz for changes/);
+    hold.browse = null;
+    letRefreshThrough();
+    await discoReady(page);
+    assert.match(await text(page, '#disco-updated'), /Updated just now/);
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+
     // Backup, wipe, restore
     await openTab(page, 'collection');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
@@ -540,10 +609,132 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     assert.ok(await page.locator('#collection-empty').isVisible());
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'the empty shelf shows one Import button');
+    await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
+    await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), path.basename(backupPath), 'the backup shows by name, not as JSON');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');
+    assert.equal(await text(page, '#import-submit'), 'Import backup');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+// The discography asks for an artist by id, either as a browse parameter or inside a search query.
+const asksForArtist = (url, id) => url.searchParams.get('artist') === id || (url.searchParams.get('query') || '').includes(`arid:"${id}"`);
+
+test('a search for an artist opens their discography in one tap', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 375, height: 760 } });
+    await openTab(page, 'add');
+    const searchBox = page.locator('#search-form [name=q]');
+    const callsBefore = mbCalls.length;
+    await searchBox.fill('radiohead');
+    const row = page.locator('#search-results .artist-row');
+    await row.waitFor();
+    assert.equal(mbCalls.length - callsBefore, 1, 'the row comes from the search itself, with no request of its own');
+    assert.equal(await row.innerText(), 'Radiohead · Artist · See all albums');
+    assert.equal(await page.locator('#search-results li').first().getAttribute('class'), 'artist-row', 'the row is above the albums');
+    assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'no sideways scrolling on a phone');
+    await shot(page, '10-artist-row');
+
+    await row.getByRole('button', { name: /See all albums/ }).click();
+    await page.locator('#disco-name', { hasText: 'Radiohead' }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#discography');
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-radiohead')), 'it loads the artist by their MusicBrainz id');
+    assert.match(await text(page, '#disco-missing'), /OK Computer/);
+
+    // An artist MusicBrainz files under another name shows as the sleeve credits them, and still
+    // opens by their MusicBrainz id
+    await openTab(page, 'add');
+    await searchBox.fill('takanaka rainbow goblins');
+    await page.locator('#search-results .artist-row', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.equal(await row.innerText(), 'Masayoshi Takanaka · Artist · See all albums');
+    await row.getByRole('button').click();
+    await page.locator('#disco-name', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-takanaka')), 'it loads 高中正義 by id');
+    assert.match(await text(page, '#disco-missing'), /Seychelles/);
+
+    // A barcode names no artist, so the row goes away
+    await openTab(page, 'add');
+    await searchBox.fill('0 724352 775324');
+    await searchBox.press('Enter');
+    await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+    assert.equal(await page.locator('#search-results .artist-row').count(), 0);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the random pick shows the 500px cover while the 1200px one loads', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, coverCalls } = await openApp(browser);
+    // Kid A's 1200px cover is slow to arrive, and OK Computer has no 1200px cover at all.
+    await context.route(/\/front-1200$/, async (route) => {
+      if (route.request().url().includes('/rg-okc/')) return route.fulfill({ status: 404, body: '' });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return route.fallback();
+    });
+    await page.evaluate(() => {
+      const record = (id, title, format) => ({ id, artist: 'Radiohead', title, year: 2000, format, releaseGroupId: `rg-${id}`, notes: '', addedAt: new Date(2024, 0, 1).toISOString() });
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
+    });
+    await page.goto(`${PAGE_URL}#random`);
+    await page.reload();
+    const shown = () => page.locator('#spin-sleeve img.shown').evaluateAll((imgs) => imgs.map((img) => img.src.split('/').pop()));
+
+    // Opened straight on Random, so nothing has loaded Kid A's cover yet, and its color hasn't been
+    // read. Only the 1200px cover is asked for, so it doesn't share the connection with two others.
+    const calls = (size) => coverCalls.filter((url) => url.endsWith(`/rg-kida/front-${size}`)).length;
+    assert.ok(!coverCalls.some((url) => url.includes('/rg-kida/')));
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-1200']);
+    assert.equal(calls(500), 0);
+
+    // The cover's main color is kept with the record. After a reload the card takes it at once,
+    // without reading the cover again.
+    const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
+    await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    assert.equal(saved, await tint());
+    await page.reload();
+    const colorReads = calls(250);
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    assert.equal(await tint(), saved);
+    assert.equal(calls(250), colorReads, 'no second read of the cover');
+
+    // With no color to read, both sizes are asked for. The 500px one shows first, and the 1200px
+    // one goes on top when it arrives.
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
+    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
+    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+
+    // Without a 1200px cover, the 500px one takes its place
+    await page.selectOption('#random-format', 'LP');
+    await page.click('#spin-btn');
+    assert.equal(await text(page, '.pick-title'), 'OK Computer');
+    await page.waitForFunction(() => document.querySelectorAll('#spin-sleeve img').length === 1);
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500']);
 
     assert.deepEqual(errors, []);
     await context.close();
@@ -566,9 +757,9 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
     const byTitle = async () => Object.fromEntries((await records()).map((r) => [r.title, r]));
 
-    await page.click('#list-import-tools');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'list-heading', 'the list box waits for a tap');
-    await page.fill('#list-form [name=list]', [
+    await page.click('#import-btn');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'import-heading', 'the list box waits for a tap');
+    await page.fill('#import-form [name=text]', [
       'Radiohead - The Bends',
       'Portishead - Dumy (Signed)',
       'Radiohed - Kid A',
@@ -577,14 +768,14 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
       'Weezer - Weezer',
       'a line with no dash',
     ].join('\n'));
-    const summary = await text(page, '#list-summary');
+    const summary = await text(page, '#import-summary');
     assert.match(summary, /4 records to add/);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 line named an album already on the list/);
     assert.match(summary, /1 line couldn't be read[\s\S]*a line with no dash/);
-    assert.equal(await text(page, '#list-submit'), 'Add 4 records');
+    assert.equal(await text(page, '#import-submit'), 'Add 4 records');
     await shot(page, 'import-01-dialog');
-    await page.click('#list-submit');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 4 records' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '5');
 
@@ -618,13 +809,20 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     await page.reload();
     assert.ok(await page.locator('#lookup').isHidden());
 
-    // Undo takes the whole import back
-    await page.click('#list-import-tools');
-    await page.fill('#list-form [name=list]', 'Portishead - Third\nPortishead - Portishead');
-    await page.click('#list-submit');
+    // Undo takes the whole import back, and puts back the wishes it ticked off
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
+    });
+    await page.reload();
+    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.wishlist.v1')).map((w) => w.title));
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 2 records' }).waitFor();
+    assert.deepEqual(await wishes(), [], 'owning Third takes it off the wishlist');
     await page.click('#toast .toast-action');
     assert.equal(await text(page, '#nav-count'), '5');
+    assert.deepEqual(await wishes(), ['Third']);
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');
@@ -667,6 +865,89 @@ test('two tabs open at once keep both their changes', { skip: !chromium && 'play
   }
 });
 
+test('imports spreadsheets saved as Excel or CSV, and says what to do with a Numbers file', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+        id: 'dummy', artist: 'Portishead', artistId: 'a-portishead', title: 'Dummy', year: 1994, releaseGroupId: 'rg-dummy',
+        format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
+      }]));
+    });
+    await page.reload();
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Steely Dan - Aja');
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records.numbers'));
+    await page.locator('#import-summary', { hasText: "can't read Numbers or old Excel (.xls) files" }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.numbers', 'the file shows by name in place of the paste box');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-submit').isDisabled());
+    await page.click('#import-paste-btn');
+    assert.ok(await page.locator('#import-chosen').isHidden());
+    assert.equal(await page.inputValue('#import-form [name=text]'), 'Steely Dan - Aja', 'Paste instead brings back what was pasted');
+    await page.locator('#import-summary', { hasText: '1 record to add.' }).waitFor();
+
+    // An .xlsx file, unzipped by the browser itself
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records-xlsxwriter.xlsx'));
+    await page.locator('#import-summary', { hasText: '5 records to add.' }).waitFor();
+    assert.match(await text(page, '#import-summary'), /Read the Artist, Album, Year, Format, Label and Notes columns\.[\s\S]*1 row is a CD or cassette/);
+    await shot(page, 'import-05-excel');
+
+    // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
+    const csv = [
+      'Artist,Album,Year,Format,Label,Price',
+      'Portishead,Dummy,1994,LP,Go! Beat',
+      '"Crosby, Stills & Nash",Crosby Stills & Nash,1969,LP,Atlantic',
+      'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
+      'Björk,Homogenic,1997-09-22,,One Little Indian',
+      ',Didn’t Say,1999,LP,',
+      'Prince,Purple Rain,1984,Cassette,Warner Bros.',
+    ].join('\r\n');
+    const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
+    await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
+    await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.csv');
+    const summary = await text(page, '#import-summary');
+    assert.match(summary, /Read the Artist, Album, Year, Format and Label columns and left out the Price column\./);
+    assert.match(summary, /1 record already in your collection is skipped/);
+    assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
+    assert.match(summary, /1 row is a CD or cassette, so it's left out\.[\s\S]*Prince, Purple Rain, 1984, Cassette, Warner Bros\./);
+    assert.ok(await page.locator('#import-format-field').isVisible());
+    await page.selectOption('#import-format', 'Double LP');
+    await shot(page, 'import-04-spreadsheet');
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 3 records' }).waitFor();
+    assert.equal(await text(page, '#nav-count'), '4');
+
+    const added = Object.fromEntries((await records()).map((r) => [r.title, [r.artist, r.year, r.format, r.notes]]));
+    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', 'Label: Atlantic']);
+    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed; Label: Bronze'], 'the umlaut survives and 7" is a 45');
+    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', 'Label: One Little Indian'], 'no format in the file, so Add as decides');
+    await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
+
+    // A Discogs collection export, pasted. Its columns are from memory and other parsers, not a real export.
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', [
+      'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+      'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,Very Good Plus (VG+),,',
+    ].join('\n'));
+    assert.match(await text(page, '#import-summary'), /1 record to add\.[\s\S]*Collection Notes columns of this Discogs export and left out the Rating, release_id, CollectionFolder and Date Added columns\./);
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 1 record' }).waitFor();
+    const nevermind = (await records()).find((r) => r.title === 'Nevermind');
+    assert.deepEqual([nevermind.artist, nevermind.year, nevermind.notes], ['Nirvana', null, 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991; Media condition: VG+']);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
 test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
@@ -691,6 +972,16 @@ test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting
       assert.deepEqual(await spinState(), ['running', 'running'], 'the record and its label turn together');
       await page.mouse.move(500, 500);
       assert.deepEqual(await spinState(), ['paused', 'paused']);
+
+      // The empty shelf and the empty wishlist draw the header's record, whole
+      for (const view of ['collection', 'wishlist']) {
+        if (view === 'wishlist') await openTab(page, 'wishlist');
+        const emptyRecord = await page.locator(`#${view}-empty .empty-logo use`).evaluate((use) => ({
+          isHeaderLogo: !!document.querySelector(use.getAttribute('href'))?.closest('.brand'),
+          width: Math.round(use.getBBox().width),
+        }));
+        assert.deepEqual(emptyRecord, { isHeaderLogo: true, width: 60 }, `${view} (${colorScheme})`);
+      }
 
       assert.deepEqual(errors, []);
       await context.close();
@@ -750,7 +1041,7 @@ test('fits a phone screen in light and dark mode', { skip: !chromium && 'playwri
         if (view === 'random') await page.click('#spin-btn');
         if (view === 'discography') {
           await page.selectOption('#disco-artist', { label: 'Radiohead (2)' });
-          await page.locator('#disco-panel').waitFor();
+          await discoReady(page);
         }
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 0, `${view} (${colorScheme}) scrolls sideways by ${overflow}px`);

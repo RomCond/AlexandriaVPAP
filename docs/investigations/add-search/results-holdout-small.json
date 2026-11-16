@@ -1,0 +1,344 @@
+{
+ "smart": {
+  "h-portishead": {
+   "input": "portishead",
+   "hit": true,
+   "byArtist": 3,
+   "rank": 3,
+   "artistRank": null,
+   "count": 11,
+   "cell": "**3/3**",
+   "top": [
+    "Portishead - Portishead (1997)",
+    "Portishead - Dummy (1994)",
+    "Portishead - Third (2008)",
+    "Portishead - Roseland NYC Live (1998)",
+    "Portishead - Glory Box (1994)"
+   ]
+  },
+  "h-chic": {
+   "input": "chic",
+   "hit": true,
+   "byArtist": 3,
+   "rank": 11,
+   "artistRank": null,
+   "count": 35,
+   "cell": "**3/3**",
+   "top": [
+    "Chic - Chic (1977)",
+    "Chic - C’est Chic (1978)",
+    "Chic - Chic-ism (1992)",
+    "Chic - Tongue in Chic (1982)",
+    "Chic - Chic Mystique (1992)"
+   ]
+  },
+  "h-nevermind": {
+   "input": "nevermind",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "count": 17,
+   "cell": "**2**",
+   "top": [
+    "Folk Nevermind - Folk Nevermind (2022)",
+    "Nirvana - Nevermind (1991)",
+    "Nirvana - Nevermind (Deluxe Edition) (2011)",
+    "Nevermind - Schluss mit Wahnsinn (2006)",
+    "Nevermind - Conversations (2016)"
+   ]
+  },
+  "h-abbey": {
+   "input": "abbey road",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 18,
+   "cell": "**1**",
+   "top": [
+    "The Beatles - Abbey Road (1969)",
+    "Abbey Road - Enjoy The Beatles!",
+    "Ada Montellanico feat. Giovanni Falzone - Abbey's Road (2016)",
+    "Various Artists - Abbey Road (2012)",
+    "Abbey Road '78 - Sgt. Pepper's Lonely Hearts Club Band (Music From the Movie) (1978)"
+   ]
+  },
+  "h-petsounds": {
+   "input": "pet sounds",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 24,
+   "cell": "**1**",
+   "top": [
+    "The Beach Boys - Pet Sounds (1966)",
+    "The Cat’s Miaow - Pet Sounds (1992)",
+    "The Rip-Off Artist - Pet Sounds (2003)",
+    "ToToM - Bastard Pet Sounds (2005)",
+    "Various Artists - A Tribute to Pet Sounds (2016)"
+   ]
+  },
+  "h-revolver": {
+   "input": "beatles revolver",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 14,
+   "cell": "**1**",
+   "top": [
+    "The Beatles - Revolver (1966)",
+    "The Pokémon Beatles - Revolver (2025)",
+    "Durag Gohan - The Beatles Revolver But With Super Mario 64 Soundfonts (2023)",
+    "Revólver - Revolver (1990)",
+    "Revolver - Revolver (1994)"
+   ]
+  },
+  "h-joni": {
+   "input": "joni mitchell blue",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "count": 27,
+   "cell": "**2**",
+   "top": [
+    "Katie Noonan - Joni Mitchell's Blue (2023)",
+    "Joni Mitchell - Blue (1971)",
+    "Joni Mitchell - Blue Highlights (2022)",
+    "Blue Mitchell - Blue’s Moods (1960)",
+    "Blue Mitchell - Blue Soul (1959)"
+   ]
+  },
+  "h-autobahn": {
+   "input": "kraftwerk autobahn",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 41,
+   "cell": "**1**",
+   "top": [
+    "Kraftwerk - Autobahn (1974)",
+    "Kraftwerk - Autobahn (1974)",
+    "Kraftwerk - Kraftwerk 1 / Kraftwerk 2 (1972)",
+    "AUTOBAHN - AUTOBAHN 2 (2014)",
+    "AUTOBAHN - AUTOBAHN 1 (2013)"
+   ]
+  },
+  "h-remain": {
+   "input": "talking heads remain in li",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 2,
+   "cell": "**1**",
+   "top": [
+    "Talking Heads - Remain in Light (1980)",
+    "Talking Heads - Talking Heads: 77 (1977)"
+   ]
+  },
+  "h-bjork": {
+   "input": "bjork homogenic",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "count": 21,
+   "cell": "**1**",
+   "top": [
+    "Björk - Homogenic (1997)",
+    "Björk Guðmundsdóttir - Björk (1977)",
+    "Brant Bjork - Brant Bjork & The Operators (2014)",
+    "Homogenic - Epic Symphony (2004)",
+    "Homogenic - Echoes of the Universe (2006)"
+   ]
+  }
+ },
+ "smart+found-artist": {
+  "h-portishead": {
+   "input": "portishead",
+   "hit": true,
+   "byArtist": 3,
+   "rank": 3,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 11,
+   "cell": "**artist row**",
+   "top": [
+    "Portishead - Portishead (1997)",
+    "Portishead - Dummy (1994)",
+    "Portishead - Third (2008)",
+    "Portishead - Roseland NYC Live (1998)",
+    "Portishead - Glory Box (1994)"
+   ],
+   "artists": [
+    "Portishead"
+   ]
+  },
+  "h-chic": {
+   "input": "chic",
+   "hit": true,
+   "byArtist": 3,
+   "rank": 11,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 35,
+   "cell": "**artist row**",
+   "top": [
+    "Chic - Chic (1977)",
+    "Chic - C’est Chic (1978)",
+    "Chic - Chic-ism (1992)",
+    "Chic - Tongue in Chic (1982)",
+    "Chic - Chic Mystique (1992)"
+   ],
+   "artists": [
+    "Chic"
+   ]
+  },
+  "h-nevermind": {
+   "input": "nevermind",
+   "hit": true,
+   "rank": 2,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 17,
+   "cell": "**2** (wrong row)",
+   "top": [
+    "Folk Nevermind - Folk Nevermind (2022)",
+    "Nirvana - Nevermind (1991)",
+    "Nirvana - Nevermind (Deluxe Edition) (2011)",
+    "Nevermind - Schluss mit Wahnsinn (2006)",
+    "Nevermind - Conversations (2016)"
+   ],
+   "artists": [
+    "Nevermind"
+   ]
+  },
+  "h-abbey": {
+   "input": "abbey road",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 18,
+   "cell": "**1** (wrong row)",
+   "top": [
+    "The Beatles - Abbey Road (1969)",
+    "Abbey Road - Enjoy The Beatles!",
+    "Ada Montellanico feat. Giovanni Falzone - Abbey's Road (2016)",
+    "Various Artists - Abbey Road (2012)",
+    "Abbey Road '78 - Sgt. Pepper's Lonely Hearts Club Band (Music From the Movie) (1978)"
+   ],
+   "artists": [
+    "Abbey Road"
+   ]
+  },
+  "h-petsounds": {
+   "input": "pet sounds",
+   "hit": true,
+   "rank": 1,
+   "artistRank": null,
+   "wrongRow": true,
+   "count": 24,
+   "cell": "**1** (wrong row)",
+   "top": [
+    "The Beach Boys - Pet Sounds (1966)",
+    "The Cat’s Miaow - Pet Sounds (1992)",
+    "The Rip-Off Artist - Pet Sounds (2003)",
+    "ToToM - Bastard Pet Sounds (2005)",
+    "Various Artists - A Tribute to Pet Sounds (2016)"
+   ],
+   "artists": [
+    "Pet"
+   ]
+  },
+  "h-revolver": {
+   "input": "beatles revolver",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 14,
+   "cell": "**1**",
+   "top": [
+    "The Beatles - Revolver (1966)",
+    "The Pokémon Beatles - Revolver (2025)",
+    "Durag Gohan - The Beatles Revolver But With Super Mario 64 Soundfonts (2023)",
+    "Revólver - Revolver (1990)",
+    "Revolver - Revolver (1994)"
+   ],
+   "artists": [
+    "The Beatles"
+   ]
+  },
+  "h-joni": {
+   "input": "joni mitchell blue",
+   "hit": true,
+   "rank": 2,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 27,
+   "cell": "**2**",
+   "top": [
+    "Katie Noonan - Joni Mitchell's Blue (2023)",
+    "Joni Mitchell - Blue (1971)",
+    "Joni Mitchell - Blue Highlights (2022)",
+    "Blue Mitchell - Blue’s Moods (1960)",
+    "Blue Mitchell - Blue Soul (1959)"
+   ],
+   "artists": [
+    "Joni Mitchell"
+   ]
+  },
+  "h-autobahn": {
+   "input": "kraftwerk autobahn",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 41,
+   "cell": "**1**",
+   "top": [
+    "Kraftwerk - Autobahn (1974)",
+    "Kraftwerk - Autobahn (1974)",
+    "Kraftwerk - Kraftwerk 1 / Kraftwerk 2 (1972)",
+    "AUTOBAHN - AUTOBAHN 2 (2014)",
+    "AUTOBAHN - AUTOBAHN 1 (2013)"
+   ],
+   "artists": [
+    "Kraftwerk"
+   ]
+  },
+  "h-remain": {
+   "input": "talking heads remain in li",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 2,
+   "cell": "**1**",
+   "top": [
+    "Talking Heads - Remain in Light (1980)",
+    "Talking Heads - Talking Heads: 77 (1977)"
+   ],
+   "artists": [
+    "Talking Heads"
+   ]
+  },
+  "h-bjork": {
+   "input": "bjork homogenic",
+   "hit": true,
+   "rank": 1,
+   "artistRank": 1,
+   "wrongRow": false,
+   "count": 21,
+   "cell": "**1**",
+   "top": [
+    "Björk - Homogenic (1997)",
+    "Björk Guðmundsdóttir - Björk (1977)",
+    "Brant Bjork - Brant Bjork & The Operators (2014)",
+    "Homogenic - Epic Symphony (2004)",
+    "Homogenic - Echoes of the Universe (2006)"
+   ],
+   "artists": [
+    "Björk"
+   ]
+  }
+ }
+}

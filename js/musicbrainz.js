@@ -14,11 +14,12 @@
   const COVERS = 'https://coverartarchive.org/release-group/';
   const MIN_GAP_MS = 1100;
   const MAX_DISCOGRAPHY_PAGES = 15;
-  const MAX_RELEASE_PAGES = 40;
-  // MusicBrainz search hands back at most this many results for one query, however it's paged.
-  const SEARCH_RESULT_LIMIT = 500;
-  // Release years are searched from here on; earlier dates (there's no vinyl that old) still count.
-  const FIRST_YEAR = 1900;
+  // 5,000 releases. The Beatles have 2,308 official and promotional albums, EPs and singles.
+  const MAX_RELEASE_PAGES = 50;
+  // MusicBrainz scores text only, so a tribute album titled "Radiohead" can outrank Radiohead's own
+  // records. How many pressings of an album a search returns is a fair sign of how well known it is,
+  // so an album's best score gets this times the natural log of its pressings on top.
+  const PRESSINGS_WEIGHT = 5;
 
   // The vinyl formats that count. Flexi-disc and VinylDisc (a CD/vinyl hybrid) don't. LPs and 12"
   // records always count; 45s (7") and 10" records are "small" and count only when turned on.
@@ -130,6 +131,20 @@
     return `(${name}:${phrase(text.trim())}^3 OR ${name}:(${terms(text, prefixLast)}))`;
   }
 
+  // Matches only when every word turns up in one of the fields, in any order, so "radiohead kid"
+  // needs "radiohead" somewhere and "kid" somewhere. A word of 4 letters or more may have one typo
+  // ("metalica"), and the last word also counts as a prefix however short it is, since the other
+  // words narrow it down ("dark side of the mo").
+  function everyWord(fields, text) {
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean).map(escapeWord);
+    return `(${words.map((word, i) => {
+      const forms = [word];
+      if (i === words.length - 1) forms.push(`${word}*`);
+      if (word.length >= 4 && /^[\p{L}\p{N}]+$/u.test(word)) forms.push(`${word}~1`);
+      return `(${fields.map((name) => `${name}:(${forms.join(' ')})`).join(' OR ')})`;
+    }).join(' AND ')})`;
+  }
+
   // Words with an allowance for typos: "metalica~" also finds "Metallica". Punctuation splits words
   // ("T.Rex" is "t rex"); short words and ones with apostrophes are matched as typed.
   function fuzzyTerms(text) {
@@ -189,6 +204,82 @@
     return [...counts].map(([format, n]) => (n > 1 ? `${n} x ${format}` : format)).join(' + ');
   }
 
+  // ---------- The artist a search names ----------
+
+  // Lowercase, accents off, and anything but letters and digits as a space: "Sigur Rós" is "sigur ros".
+  function plain(text) {
+    return (text || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  function editDistance(a, b) {
+    const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      let diagonal = row[0];
+      row[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const next = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+        diagonal = row[j];
+        row[j] = next;
+      }
+    }
+    return row[b.length];
+  }
+
+  /*
+   * A search for just "radiohead" or "low" lists albums, and MusicBrainz ranks albums titled after the
+   * band above the band's own records. So the search also names an artist, for a row above the albums,
+   * when their name is what was typed or the words at its start or end ("radiohead kid"). One typo is
+   * fine in a name of 5 letters or more, and a leading "The" can be left off. A two-word name also
+   * matches by its last word when that has 4 letters or more ("bowie"); shorter ones are too common
+   * ("Toner Low" would match "low"). The artist comes from the pressings already found, so it costs
+   * no extra request; with several, the one with the most pressings wins. Returns { id, name } or null.
+   * The name is the one that matched what was typed: the artist's own name when that matched, or else
+   * the name the records credit most often, so "takanaka" shows "Masayoshi Takanaka", not 高中正義.
+   */
+  function artistInResults(releases, text) {
+    const words = plain(text).split(' ').filter(Boolean);
+    const runs = [];
+    for (let k = words.length; k >= 1; k--) {
+      runs.push(words.slice(0, k).join(' '));
+      if (k < words.length) runs.push(words.slice(words.length - k).join(' '));
+    }
+    const close = (run, name) => run === name || (name.length >= 5 && editDistance(run, name) <= 1);
+    const formsOf = (name) => {
+      const full = plain(name);
+      if (!full) return [];
+      const parts = full.split(' ');
+      return [full, full.replace(/^the /, ''), ...(parts.length === 2 && parts[1].length >= 4 ? [parts[1]] : [])];
+    };
+    const matches = (run, names) => names.some((name) => close(run, name));
+
+    const artists = new Map();
+    for (const release of releases) {
+      const part = (release['artist-credit'] || [])[0];
+      if (!part || !part.artist || !part.artist.id || SKIPPED_STATUSES.includes(release.status)) continue;
+      const artist = artists.get(part.artist.id)
+        || { id: part.artist.id, name: part.artist.name, own: formsOf(part.artist.name), credits: new Map(), pressings: 0 };
+      artist.pressings += 1;
+      const credited = part.name || part.artist.name;
+      const credit = artist.credits.get(credited) || { forms: formsOf(credited), pressings: 0 };
+      credit.pressings += 1;
+      artist.credits.set(credited, credit);
+      artists.set(artist.id, artist);
+    }
+
+    let best = null;
+    for (const artist of artists.values()) {
+      const credits = [...artist.credits].sort((a, b) => b[1].pressings - a[1].pressings);
+      const run = runs.find((r) => matches(r, artist.own) || credits.some(([, credit]) => matches(r, credit.forms)));
+      if (!run) continue;
+      const length = run.split(' ').length;
+      if (!best || artist.pressings > best.pressings || (artist.pressings === best.pressings && length > best.length)) {
+        const name = matches(run, artist.own) ? artist.name : credits.find(([, credit]) => matches(run, credit.forms))[0];
+        best = { id: artist.id, name, pressings: artist.pressings, length };
+      }
+    }
+    return best && { id: best.id, name: best.name };
+  }
+
   // ---------- Public calls ----------
 
   /*
@@ -200,16 +291,23 @@
    * vinyl pressings of albums that have them, so those show anyway with vinyl: false
    * ("Vinyl not confirmed"). The year is the earliest vinyl pressing, or the earliest release when
    * there's none. 45s and 10" records count only when small is on.
+   * Resolves to { results, artist }, where artist is the one artistInResults names, or null.
    */
   async function searchReleaseGroups(text, signal, small) {
-    const words = ['release', 'artist'].map((name) => field(name, text, true)).join(' OR ');
+    // Results matching every word, in the title, the artist or a release note like "blue album", rank
+    // well above those matching only some.
+    const words = `${field('release', text, true)} OR ${field('artist', text, true)} OR ${everyWord(['release', 'artist', 'comment'], text)}^4`;
     const query = `(${words}) AND (${vinylQuery(small)} OR primarytype:album)`;
     const data = await get('release', { query, limit: 100 }, signal);
 
+    // Every pressing counts here, CDs too, as a sign of how well known the album is.
+    const pressings = new Map();
     const albums = new Map();
     for (const release of data.releases || []) {
       const group = release['release-group'] || {};
       if (!group.id || SKIPPED_STATUSES.includes(release.status)) continue;
+      const seen = pressings.get(group.id) || { count: 0, score: 0 };
+      pressings.set(group.id, { count: seen.count + 1, score: Math.max(seen.score, release.score || 0) });
       const vinyl = formatsOf(release).some((format) => allowedVinyl(format, small));
       const studio = group['primary-type'] === 'Album' && !(group['secondary-types'] || []).length;
 
@@ -232,8 +330,13 @@
     }
 
     const dateOf = (album) => (album.vinyl ? album.vinylDate : album.anyDate) || '';
-    return [...albums.values()]
-      .sort((a, b) => b.score - a.score
+    const rank = (album) => {
+      const { count, score } = pressings.get(album.group.id);
+      return score + PRESSINGS_WEIGHT * Math.log(count);
+    };
+    const results = [...albums.values()]
+      .sort((a, b) => rank(b) - rank(a)
+        || b.score - a.score
         || Number(b.vinyl) - Number(a.vinyl)
         || typeRank(a.group) - typeRank(b.group)
         || (dateOf(a) || '9999').localeCompare(dateOf(b) || '9999'))
@@ -251,6 +354,7 @@
         formatHint: null,
         media: '',
       }));
+    return { results, artist: artistInResults(data.releases || [], text) };
   }
 
   // Only vinyl pressings come back (45s and 10" only when small is on). hiddenNonVinyl counts the
@@ -292,10 +396,10 @@
   }
 
   // What the single search box on the Add page calls. Pass { small: true } to include 45s and 10"
-  // records. Resolves to { results, hiddenNonVinyl, hiddenSmall }.
+  // records. Resolves to { results, artist, hiddenNonVinyl, hiddenSmall }; artist is null for a barcode.
   async function search(text, signal, { small = false } = {}) {
-    if (looksLikeBarcode(text)) return searchBarcode(text.replace(/\D/g, ''), signal, small);
-    return { results: await searchReleaseGroups(text, signal, small), hiddenNonVinyl: 0, hiddenSmall: 0 };
+    if (looksLikeBarcode(text)) return { ...(await searchBarcode(text.replace(/\D/g, ''), signal, small)), artist: null };
+    return { ...(await searchReleaseGroups(text, signal, small)), hiddenNonVinyl: 0, hiddenSmall: 0 };
   }
 
   /*
@@ -340,151 +444,123 @@
     }));
   }
 
-  // The artist's releases that match a search condition, minus bootlegs. large is whether a release
-  // has an LP or 12" disc (null when MusicBrainz didn't say what format it is), small a 45 or 10".
-  /*
-   * MusicBrainz search returns at most 500 results for a query, and big artists have more vinyl
-   * pressings than that (David Bowie about 525, the Beatles about 1,500). So a search with more is
-   * split by release year, halving the range until each part fits, plus a part for releases with no
-   * date. complete is false if some were still left out: a single year with more than 500, or more
-   * pages than MAX_RELEASE_PAGES.
-   */
-  async function searchArtistReleases(artistId, condition, onProgress) {
-    const base = `arid:"${artistId}" AND ${condition}`;
-    const lastYear = new Date().getFullYear() + 1;
-    const releases = new Map();
-    const seen = new Set();
-    let total = null;
-    let pages = 0;
-    let complete = true;
-
-    async function page(query, offset) {
-      pages += 1;
-      const data = await get('release', { query, limit: 100, offset });
-      if (total === null) total = data.count || 0;
-      for (const release of data.releases || []) {
-        // Parts of a split search don't overlap, but a release can come up again in a query that was
-        // split after its first page. One without an id is never taken for another.
-        const key = release.id || {};
-        seen.add(key);
-        const group = release['release-group'];
-        if (!group || SKIPPED_STATUSES.includes(release.status) || releases.has(key)) continue;
-        const formats = formatsOf(release);
-        const words = `${release.title || ''} ${release.disambiguation || ''}`;
-        releases.set(key, {
-          id: release.id,
-          groupId: group.id,
-          date: release.date || '',
-          large: formats.length ? formats.some((format) => LARGE_VINYL.test(format)) : null,
-          small: formats.some((format) => SMALL_VINYL.test(format)),
-          edition: /\bdeluxe\b/i.test(words) ? 'Deluxe' : /\bexpanded\b/i.test(words) ? 'Expanded' : null,
-        });
-      }
-      if (onProgress) onProgress(Math.min(seen.size, total), total);
-      return data;
-    }
-
-    // Every result of a query. Returns false, after one page, when there are more than MusicBrainz
-    // hands back, unless takeWhatFits is set: then it keeps the first 500.
-    async function pageThrough(query, takeWhatFits) {
-      if (pages >= MAX_RELEASE_PAGES) {
-        complete = false;
-        return true;
-      }
-      const first = await page(query, 0);
-      const count = first.count || 0;
-      if (count > SEARCH_RESULT_LIMIT) {
-        if (!takeWhatFits) return false;
-        complete = false;
-      }
-      let offset = (first.releases || []).length;
-      while (offset && offset < Math.min(count, SEARCH_RESULT_LIMIT)) {
-        if (pages >= MAX_RELEASE_PAGES) {
-          complete = false;
-          break;
-        }
-        const batch = (await page(query, offset)).releases || [];
-        if (!batch.length) break;
-        offset += batch.length;
-      }
-      return true;
-    }
-
-    async function byYears(from, to) {
-      const range = `date:[${from === FIRST_YEAR ? '*' : from} TO ${to === lastYear ? '*' : to}]`;
-      if (await pageThrough(`${base} AND ${range}`, from === to)) return;
-      const middle = Math.floor((from + to) / 2);
-      await byYears(from, middle);
-      await byYears(middle + 1, to);
-    }
-
-    if (!(await pageThrough(base))) {
-      await pageThrough(`${base} AND NOT date:[* TO *]`, true);
-      await byYears(FIRST_YEAR, lastYear);
-    }
-    return { releases: [...releases.values()], complete };
+  // A release group as the discography keeps it, before any of its releases are looked at.
+  function newGroup(group) {
+    return {
+      id: group.id,
+      title: group.title,
+      date: group['first-release-date'] || '',
+      primaryType: group['primary-type'] || null,
+      secondaryTypes: group['secondary-types'] || [],
+      vinyl: false,
+      small: false,
+      deluxe: null,
+    };
   }
 
   /*
-   * Every album, EP and single credited to the artist, paged 100 at a time. Each one says whether
-   * the original has an LP or 12" pressing (vinyl) and whether it has a 45 or 10" one (small), and
-   * carries a `deluxe` entry, with the same two flags, when MusicBrainz has a deluxe or expanded
-   * edition filed under it. onProgress gets { step, loaded, total }.
+   * Folds one release into its release group: an LP or 12" pressing sets vinyl, a 45 or 10" one
+   * small. A release that says deluxe or expanded, when its album's own title doesn't, goes into the
+   * group's deluxe entry instead, which every such release of the album shares. The entry is named
+   * "Deluxe" if any of them says so.
    */
-  async function getDiscography(artistId, onProgress) {
-    const report = (step) => (loaded, total) => onProgress && onProgress({ step, loaded, total });
-    const groups = [];
+  function addRelease(byId, release) {
+    const found = release['release-group'];
+    if (!found || !found.id) return;
+    if (!byId.has(found.id)) byId.set(found.id, newGroup(found));
+    const group = byId.get(found.id);
+    const formats = formatsOf(release);
+    const large = formats.some((format) => LARGE_VINYL.test(format));
+    const small = formats.some((format) => SMALL_VINYL.test(format));
+    const words = `${release.title || ''} ${release.disambiguation || ''}`;
+    if (!DELUXE_WORDS.test(words) || DELUXE_WORDS.test(group.title)) {
+      if (large) group.vinyl = true;
+      if (small) group.small = true;
+      return;
+    }
+    const entry = group.deluxe || (group.deluxe = { title: `${group.title} (Expanded Edition)`, date: '', vinyl: false, small: false, releaseIds: [] });
+    entry.releaseIds.push(release.id);
+    if (/\bdeluxe\b/i.test(words)) entry.title = `${group.title} (Deluxe Edition)`;
+    if (large) entry.vinyl = true;
+    if (small) entry.small = true;
+    if (release.date && (!entry.date || release.date < entry.date)) entry.date = release.date;
+  }
+
+  // Every album, EP and single credited to the artist, 100 at a time, added to byId.
+  async function browseGroups(artistId, byId, signal, onPage) {
+    let loaded = 0;
     let total = 0;
     for (let page = 0; page < MAX_DISCOGRAPHY_PAGES; page++) {
-      const data = await get('release-group', { artist: artistId, type: 'album|ep|single', limit: 100, offset: groups.length });
+      const data = await get('release-group', { artist: artistId, type: 'album|ep|single', limit: 100, offset: loaded }, signal);
       total = data['release-group-count'] || 0;
       const batch = data['release-groups'] || [];
-      for (const group of batch) {
-        groups.push({
-          id: group.id,
-          title: group.title,
-          date: group['first-release-date'] || '',
-          primaryType: group['primary-type'] || null,
-          secondaryTypes: group['secondary-types'] || [],
-        });
-      }
-      report('releases')(groups.length, total);
-      if (!batch.length || groups.length >= total) break;
+      for (const group of batch) if (!byId.has(group.id)) byId.set(group.id, newGroup(group));
+      loaded += batch.length;
+      onPage(loaded, total);
+      if (!batch.length || loaded >= total) break;
     }
-    const vinyl = await searchArtistReleases(artistId, vinylQuery(true), report('vinyl'));
-    const deluxe = await searchArtistReleases(artistId, '(release:(deluxe OR expanded) OR comment:(deluxe OR expanded))', report('deluxe'));
+    return { total, truncated: loaded < total };
+  }
 
-    const byId = new Map(groups.map((group) => [group.id, group]));
-    for (const group of groups) {
-      group.vinyl = false;
-      group.small = false;
-      group.deluxe = null;
-    }
-    // A release is a deluxe version of an album when it says deluxe and the album's own title doesn't.
-    const deluxeOf = (release) => {
-      const group = byId.get(release.groupId);
-      return group && release.edition && !DELUXE_WORDS.test(group.title) ? group : null;
-    };
-    for (const release of vinyl.releases) {
-      const group = byId.get(release.groupId);
-      if (!group || deluxeOf(release)) continue;
-      // The search already asked for vinyl, so a release with no format listed counts as an LP.
-      if (release.large !== false) group.vinyl = true;
-      if (release.small) group.small = true;
-    }
-    // Every deluxe or expanded release of an album folds into one entry, named "Deluxe" if any says so.
-    for (const release of deluxe.releases) {
-      const group = deluxeOf(release);
-      if (!group) continue;
-      const entry = group.deluxe || (group.deluxe = { title: `${group.title} (Expanded Edition)`, date: '', vinyl: false, small: false, releaseIds: [] });
-      entry.releaseIds.push(release.id);
-      if (release.edition === 'Deluxe') entry.title = `${group.title} (Deluxe Edition)`;
-      if (release.large) entry.vinyl = true;
-      if (release.small) entry.small = true;
-      if (release.date && (!entry.date || release.date < entry.date)) entry.date = release.date;
+  /*
+   * An artist's albums, EPs and singles. Each says whether the original has an LP or 12" pressing
+   * (vinyl) and a 45 or 10" one (small), and carries a `deluxe` entry, with the same two flags, when
+   * MusicBrainz has a deluxe or expanded edition filed under it.
+   *
+   * Studio albums come first, from one search, so they can show at once. Then the artist's official
+   * and promotional releases are browsed 100 at a time with their formats. Browsing pages through the
+   * database in a fixed order. Paging through a search doesn't: MusicBrainz returns results that tie
+   * on score in a different order each time, which used to lose about a fifth of the pressings.
+   * Bootlegs, pseudo-releases and releases with no status don't count.
+   *
+   * Release groups with no official or promotional release, mostly bootlegs, are left out. They only
+   * show with Vinyl only off, and addAllReleaseGroups fetches them then. An artist with more studio
+   * albums than one search page holds gets every group up front instead (allGroups).
+   *
+   * onProgress gets { step, loaded, total, discography } after each request, with what's known so far.
+   * Pass a signal to stop it.
+   */
+  async function getDiscography(artistId, onProgress, { signal } = {}) {
+    const byId = new Map();
+    const state = { total: 0, truncated: false, vinylComplete: true, allGroups: false };
+    // A copy, since later pages keep changing the groups.
+    const copy = (group) => ({ ...group, deluxe: group.deluxe && { ...group.deluxe, releaseIds: [...group.deluxe.releaseIds] } });
+    const snapshot = () => ({ ...state, groups: [...byId.values()].map(copy), total: state.allGroups ? state.total : byId.size });
+    const report = (step) => (loaded, total) => onProgress && onProgress({ step, loaded, total, discography: snapshot() });
+
+    const query = `arid:"${artistId}" AND primarytype:album AND NOT secondarytype:[* TO *]`;
+    const studio = await get('release-group', { query, limit: 100 }, signal);
+    const albums = studio['release-groups'] || [];
+    if ((studio.count || 0) > albums.length) {
+      Object.assign(state, await browseGroups(artistId, byId, signal, report('groups')), { allGroups: true });
+    } else {
+      for (const group of albums) byId.set(group.id, newGroup(group));
+      report('studio')(albums.length, albums.length);
     }
 
-    return { groups, total, truncated: groups.length < total, vinylComplete: vinyl.complete && deluxe.complete };
+    let loaded = 0;
+    let total = 0;
+    for (let page = 0; page < MAX_RELEASE_PAGES; page++) {
+      const data = await get('release', {
+        artist: artistId, type: 'album|ep|single', status: 'official|promotion', inc: 'media+release-groups', limit: 100, offset: loaded,
+      }, signal);
+      total = data['release-count'] || 0;
+      const batch = data.releases || [];
+      for (const release of batch) addRelease(byId, release);
+      loaded += batch.length;
+      report('vinyl')(loaded, total);
+      if (!batch.length || loaded >= total) break;
+    }
+    state.vinylComplete = loaded >= total;
+    return snapshot();
+  }
+
+  // The discography with every album, EP and single added, including those with no official release.
+  // onProgress gets { step: 'groups', loaded, total }.
+  async function addAllReleaseGroups(discography, artistId, onProgress, { signal } = {}) {
+    const byId = new Map(discography.groups.map((group) => [group.id, group]));
+    const done = await browseGroups(artistId, byId, signal, (loaded, total) => onProgress && onProgress({ step: 'groups', loaded, total }));
+    return { ...discography, ...done, groups: [...byId.values()], allGroups: true };
   }
 
   function coverUrl(releaseGroupId, size) {
@@ -499,8 +575,9 @@
     searchAlbumCandidates,
     looksLikeBarcode,
     getDiscography,
+    addAllReleaseGroups,
     coverUrl,
     yearOf,
-    internals: { field, formatFromMedia, mediaLabel, creditName, searchArtistReleases },
+    internals: { field, formatFromMedia, mediaLabel, creditName },
   };
 });
