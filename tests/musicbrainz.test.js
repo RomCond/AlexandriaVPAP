@@ -67,7 +67,10 @@ test('search looks for vinyl pressings and studio albums by title or artist name
   assert.equal(calls[0].searchParams.get('fmt'), 'json');
   assert.equal(calls[0].searchParams.get('query'),
     '((release:"radiohead ok comp"^3 OR release:(radiohead ok comp comp*))'
-    + ' OR (artist:"radiohead ok comp"^3 OR artist:(radiohead ok comp comp*)))'
+    + ' OR (artist:"radiohead ok comp"^3 OR artist:(radiohead ok comp comp*))'
+    + ' OR ((release:(radiohead radiohead~1) OR artist:(radiohead radiohead~1) OR comment:(radiohead radiohead~1))'
+    + ' AND (release:(ok) OR artist:(ok) OR comment:(ok))'
+    + ' AND (release:(comp comp* comp~1) OR artist:(comp comp* comp~1) OR comment:(comp comp* comp~1)))^4)'
     + ' AND (format:(vinyl OR 12vinyl) OR primarytype:album)', 'LPs and 12" records (by default), plus studio albums');
   assert.deepEqual(results[0], {
     releaseGroupId: 'rg1',
@@ -83,6 +86,76 @@ test('search looks for vinyl pressings and studio albums by title or artist name
     formatHint: null,
     media: '',
   });
+});
+
+test('matches with every word rank first, allowing a typo and a half-typed last word', async (t) => {
+  const queries = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    queries.push(new URL(url).searchParams.get('query'));
+    return jsonResponse({ releases: [] });
+  });
+  await mb.search('dark side of the mo');
+  assert.match(queries[0], /\(release:\(mo mo\*\) OR artist:\(mo mo\*\) OR comment:\(mo mo\*\)\)\)\^4\)/, 'a last word of 2 letters is a prefix too');
+  assert.match(queries[0], /\(release:\(dark dark~1\) OR artist:\(dark dark~1\) OR comment:\(dark dark~1\)\)/, 'one typo allowed');
+  assert.match(queries[0], /\(release:\(of\) OR artist:\(of\) OR comment:\(of\)\)/, 'short words must match as typed');
+  await mb.search('ac/dc back');
+  assert.match(queries[1], /\(release:\(ac\\\/dc\) OR artist:\(ac\\\/dc\) OR comment:\(ac\\\/dc\)\)/, 'no typo allowance for words with punctuation');
+});
+
+test('an album with many pressings outranks a lone pressing that matches slightly better', async (t) => {
+  const tribute = { id: 'tribute', title: 'Rumours', type: 'Album' };
+  const rumours = { id: 'rumours', title: 'Rumours', type: 'Album' };
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse({
+    releases: [
+      pressing('r1', tribute, { score: 100, artist: 'The Rumours' }),
+      pressing('r2', rumours, { score: 97, artist: 'Fleetwood Mac' }),
+      pressing('r3', rumours, { score: 97, artist: 'Fleetwood Mac' }),
+      pressing('r4', rumours, { score: 97, artist: 'Fleetwood Mac', formats: ['CD'] }), // CDs count as pressings too
+    ],
+  }));
+  const { results } = await mb.search('rumours');
+  assert.deepEqual(results.map((r) => r.artist), ['Fleetwood Mac', 'The Rumours']);
+});
+
+test('search names the artist whose name was typed, from the pressings it found', async (t) => {
+  const credited = (release, name, id, as = name) => ({ ...release, 'artist-credit': [{ name: as, artist: { id, name } }] });
+  const album = (id, title) => ({ id, title, type: 'Album' });
+  let releases = [];
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse({ releases }));
+
+  releases = [
+    credited(pressing('r1', album('tribute', 'Radiohead')), 'Cage', 'a-cage'),
+    credited(pressing('r2', album('vs', 'Greenhouse Effect vs. Radiohead')), 'Greenhouse Effect vs. Radiohead', 'a-vs'),
+    credited(pressing('r3', album('okc', 'OK Computer')), 'Radiohead', 'a-rh'),
+  ];
+  assert.deepEqual((await mb.search('radiohead')).artist, { id: 'a-rh', name: 'Radiohead' }, 'the whole text');
+  assert.deepEqual((await mb.search('radiohead kid')).artist, { id: 'a-rh', name: 'Radiohead' }, 'the words at the start');
+  assert.deepEqual((await mb.search('radiohed ok computer')).artist, { id: 'a-rh', name: 'Radiohead' }, 'one typo');
+  assert.equal((await mb.search('ok computer')).artist, null, 'nobody is called OK Computer');
+
+  releases = [
+    credited(pressing('r1', album('low-band', 'Things We Lost in the Fire')), 'Low', 'a-low'),
+    ...['r2', 'r3'].map((id) => credited(pressing(id, album('toner', 'Toner Low')), 'Toner Low', 'a-toner')),
+    ...['r4', 'r5', 'r6'].map((id) => credited(pressing(id, album('low-bowie', 'Low')), 'David Bowie', 'a-bowie')),
+    credited(pressing('r7', album('glass', '"Low" Symphony')), 'Philip Glass', 'a-glass'),
+  ];
+  assert.deepEqual((await mb.search('bowie low')).artist, { id: 'a-bowie', name: 'David Bowie' }, 'a surname, and the most pressings wins');
+  assert.deepEqual((await mb.search('low')).artist, { id: 'a-low', name: 'Low' }, '"Toner Low" does not match "low"');
+
+  releases = [credited(pressing('r1', album('soul', 'Soul Mining')), 'The The', 'a-thethe', 'THE THE')];
+  assert.deepEqual((await mb.search('the the soul mining')).artist, { id: 'a-thethe', name: 'The The' }, 'the credited name counts too');
+
+  // The row shows the name that matched: the artist's own when it did, or else the credited one
+  const goblins = album('goblins', '虹伝説 THE RAINBOW GOBLINS');
+  releases = [
+    ...['r1', 'r2'].map((id) => credited(pressing(id, goblins), '高中正義', 'a-takanaka', 'Masayoshi Takanaka')),
+    credited(pressing('r3', goblins), '高中正義', 'a-takanaka'),
+  ];
+  assert.deepEqual((await mb.search('takanaka rainbow goblins')).artist, { id: 'a-takanaka', name: 'Masayoshi Takanaka' }, 'the credited name, with the artist\'s own id');
+  assert.deepEqual((await mb.search('高中正義')).artist, { id: 'a-takanaka', name: '高中正義' });
+  releases = [credited(pressing('r1', album('monster', 'Monster Movie')), 'Can', 'a-can', 'CAN')];
+  assert.deepEqual((await mb.search('can')).artist, { id: 'a-can', name: 'Can' }, 'the artist\'s own name when it matched');
+  assert.equal((await mb.search('0 724352 775324')).artist, null, 'a barcode names no artist');
 });
 
 test('search shows each vinyl album or single once, and leaves out what never came out on vinyl', async (t) => {

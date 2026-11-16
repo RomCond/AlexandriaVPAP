@@ -580,6 +580,8 @@
   // so a search per keystroke would just queue up.
   const SEARCH_DELAY_MS = 450;
   let results = [];
+  // The artist a search named, shown as a row above the albums: { id, name } or null.
+  let resultArtist = null;
   let searchTimer = null;
   let searchController = null;
   let lastQuery = '';
@@ -603,6 +605,7 @@
       searchController = null;
       lastQuery = '';
       results = [];
+      resultArtist = null;
       renderResults();
       setStatus('#search-status', '');
       return;
@@ -620,9 +623,10 @@
     // The previous results stay up until the new ones arrive, so the list doesn't flicker while typing.
     setStatus('#search-status', mb.looksLikeBarcode(text) ? 'Looking up that barcode…' : 'Searching…', 'busy');
     try {
-      const { results: found, hiddenNonVinyl, hiddenSmall } = await mb.search(text, controller.signal, { small: smallRecords() });
+      const { results: found, artist, hiddenNonVinyl, hiddenSmall } = await mb.search(text, controller.signal, { small: smallRecords() });
       if (controller !== searchController) return;
       results = found;
+      resultArtist = artist;
       let note = '';
       if (!found.length && hiddenSmall) note = 'That barcode is for a 45 or a 10" record. Turn on "Include 45s and 10" records" to add it.';
       else if (!found.length && hiddenNonVinyl) note = 'That barcode is for a CD or cassette, not a vinyl record.';
@@ -636,8 +640,25 @@
     }
   }
 
+  // Someone who types only "radiohead" or "low" most likely wants that artist's records, which the
+  // album list alone ranks poorly. One tap opens the artist's discography, which lists every album.
+  function artistRow(artist) {
+    return h('li', { class: 'artist-row' },
+      h('button', {
+        type: 'button',
+        class: 'artist-link',
+        onclick: () => {
+          location.hash = 'discography';
+          loadDiscography(artist);
+        },
+      },
+      h('span', { class: 'artist-name' }, artist.name),
+      h('span', { class: 'artist-kind' }, ' · Artist · '),
+      h('span', { class: 'artist-action' }, 'See all albums')));
+  }
+
   function renderResults() {
-    $('#search-results').replaceChildren(...results.map((result) => h('li', { class: 'result' },
+    $('#search-results').replaceChildren(...(resultArtist ? [artistRow(resultArtist)] : []), ...results.map((result) => h('li', { class: 'result' },
       cover(result, 'sm'),
       h('div', { class: 'result-text' },
         h('span', { class: 'record-title' }, result.title),

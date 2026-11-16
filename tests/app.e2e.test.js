@@ -40,6 +40,10 @@ const DISCOGRAPHIES = {
     rg('rg-portishead', 'Portishead', '1997-09-29'),
     rg('rg-third', 'Third', '2008-04-28'),
   ],
+  'a-takanaka': [
+    rg('rg-seychelles', 'Seychelles', '1976-07-25'),
+    rg('rg-goblins', '虹伝説 THE RAINBOW GOBLINS', '1981-04-25'),
+  ],
 };
 
 // The artists' releases, as browsing them with inc=media+release-groups returns them. Pablo Honey
@@ -102,6 +106,16 @@ function fakeMusicBrainz(url) {
     const statuses = (params.get('status') || '').split('|');
     const releases = (RELEASES[params.get('artist')] || []).filter((r) => !params.get('status') || statuses.includes(r.status.toLowerCase()));
     return { 'release-count': releases.length, 'release-offset': 0, releases };
+  }
+  if (url.pathname === '/ws/2/release' && query.includes('takanaka')) {
+    // MusicBrainz files him as 高中正義, and the sleeve credits Masayoshi Takanaka.
+    const group = { id: 'rg-goblins', title: '虹伝説 THE RAINBOW GOBLINS', 'primary-type': 'Album', 'secondary-types': [] };
+    return {
+      releases: [{
+        id: 'rel-goblins', status: 'Official', score: 100, title: group.title, date: '1981-04-25', 'release-group': group,
+        'artist-credit': [{ name: 'Masayoshi Takanaka', artist: { id: 'a-takanaka', name: '高中正義' } }], media: [{ format: '12" Vinyl' }],
+      }],
+    };
   }
   if (url.pathname === '/ws/2/release' && !query.startsWith('barcode:')) {
     // Typed search: vinyl pressings, grouped into albums by the app. Two pressings of OK Computer
@@ -274,6 +288,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(typedSearches.length, 1, `typing sent ${typedSearches.length} searches`);
     assert.match(typedSearches[0].searchParams.get('query'), /artist:\(radiohead ok comp comp\*\)/);
     assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.equal(await text(page, '#search-results .artist-row'), 'Radiohead · Artist · See all albums', 'the artist typed gets a row above the albums');
     await page.locator('#search-results .result').first().getByRole('button', { name: 'Add' }).click();
     await page.locator('#toast.show', { hasText: 'Added OK Computer' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '1');
@@ -606,6 +621,57 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+// The discography asks for an artist by id, either as a browse parameter or inside a search query.
+const asksForArtist = (url, id) => url.searchParams.get('artist') === id || (url.searchParams.get('query') || '').includes(`arid:"${id}"`);
+
+test('a search for an artist opens their discography in one tap', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 375, height: 760 } });
+    await openTab(page, 'add');
+    const searchBox = page.locator('#search-form [name=q]');
+    const callsBefore = mbCalls.length;
+    await searchBox.fill('radiohead');
+    const row = page.locator('#search-results .artist-row');
+    await row.waitFor();
+    assert.equal(mbCalls.length - callsBefore, 1, 'the row comes from the search itself, with no request of its own');
+    assert.equal(await row.innerText(), 'Radiohead · Artist · See all albums');
+    assert.equal(await page.locator('#search-results li').first().getAttribute('class'), 'artist-row', 'the row is above the albums');
+    assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'no sideways scrolling on a phone');
+    await shot(page, '10-artist-row');
+
+    await row.getByRole('button', { name: /See all albums/ }).click();
+    await page.locator('#disco-name', { hasText: 'Radiohead' }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#discography');
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-radiohead')), 'it loads the artist by their MusicBrainz id');
+    assert.match(await text(page, '#disco-missing'), /OK Computer/);
+
+    // An artist MusicBrainz files under another name shows as the sleeve credits them, and still
+    // opens by their MusicBrainz id
+    await openTab(page, 'add');
+    await searchBox.fill('takanaka rainbow goblins');
+    await page.locator('#search-results .artist-row', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.equal(await row.innerText(), 'Masayoshi Takanaka · Artist · See all albums');
+    await row.getByRole('button').click();
+    await page.locator('#disco-name', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-takanaka')), 'it loads 高中正義 by id');
+    assert.match(await text(page, '#disco-missing'), /Seychelles/);
+
+    // A barcode names no artist, so the row goes away
+    await openTab(page, 'add');
+    await searchBox.fill('0 724352 775324');
+    await searchBox.press('Enter');
+    await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+    assert.equal(await page.locator('#search-results .artist-row').count(), 0);
 
     assert.deepEqual(errors, []);
     await context.close();

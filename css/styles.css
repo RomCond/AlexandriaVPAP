@@ -486,6 +486,24 @@ details.card[open] > summary::before { content: "\2212"; }
 
 .result:first-child { border-top: 0; }
 
+/* The artist a search names: one slim line above the albums that opens their discography. */
+.artist-link {
+  display: block;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  font-weight: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+.artist-link:hover { background: transparent; }
+.artist-link:hover .artist-action { text-decoration: underline; }
+.artist-name { font-weight: 600; }
+.artist-kind { color: var(--muted); }
+.artist-action { color: var(--accent); font-weight: 600; }
+
 .result-text, .record-text {
   display: grid;
   min-width: 0;
