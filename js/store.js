@@ -14,10 +14,10 @@
     records: 'recordcatalog.records.v1',
     wishlist: 'recordcatalog.wishlist.v1',
     confirmed: 'recordcatalog.confirmed.v1', // releases you've confirmed came out on vinyl
-    discographies: 'recordcatalog.discographies.v5', // v5: LP and 45/10" pressings tracked separately
+    discographies: 'recordcatalog.discographies.v6', // v6: vinyl from browsing official releases, not search
     prefs: 'recordcatalog.prefs.v1',
   };
-  const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4'];
+  const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4', 'recordcatalog.discographies.v5'];
 
   // Vinyl only. Records saved earlier as CD or Cassette keep that format until you change it.
   const FORMATS = ['LP', 'Double LP', 'EP', '45', '10"', '12" single', 'Box set', 'Other'];
@@ -41,7 +41,10 @@
   ];
 
   const DAY = 24 * 60 * 60 * 1000;
-  const DISCOGRAPHY_MAX_AGE = 7 * DAY;
+  // A saved discography is refreshed in the background once it's a week old, and shown while that
+  // happens. After four weeks it's deleted, and the artist loads from scratch.
+  const DISCOGRAPHY_FRESH_FOR = 7 * DAY;
+  const DISCOGRAPHY_KEPT_FOR = 28 * DAY;
 
   // ---------- Text matching ----------
 
@@ -962,16 +965,21 @@
 
       getDiscography(artistId) {
         const entry = read(KEYS.discographies, {})[artistId];
-        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_MAX_AGE) return null;
+        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) return null;
         return entry;
       },
 
+      discographyStale(entry) {
+        return Date.now() - entry.fetchedAt > DISCOGRAPHY_FRESH_FOR;
+      },
+
+      // A discography only gaining the groups that show with Vinyl only off keeps its fetchedAt.
       saveDiscography(artistId, data) {
         const cache = read(KEYS.discographies, {});
         for (const [id, entry] of Object.entries(cache)) {
-          if (Date.now() - entry.fetchedAt > 4 * DISCOGRAPHY_MAX_AGE) delete cache[id];
+          if (Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) delete cache[id];
         }
-        cache[artistId] = { ...data, fetchedAt: Date.now() };
+        cache[artistId] = { ...data, fetchedAt: data.fetchedAt || Date.now() };
         try {
           write(KEYS.discographies, cache);
         } catch (e) {

@@ -33,6 +33,7 @@ const DISCOGRAPHIES = {
     rg('rg-amnesiac', 'Amnesiac', '2001-06-04'),
     rg('rg-creep', 'Creep', '1992-09-21', 'Single'),
     rg('rg-wrong', 'I Might Be Wrong: Live Recordings', '2001-11-12', 'Album', ['Live']),
+    rg('rg-glasto', 'Live at Glastonbury 1997', '1997-06-28', 'Album', ['Live']),
   ],
   'a-portishead': [
     rg('rg-dummy', 'Dummy', '1994-08-22'),
@@ -41,34 +42,34 @@ const DISCOGRAPHIES = {
   ],
 };
 
-// Answers to the "vinyl releases by this artist" search. Pablo Honey only has a bootleg
-// and a CD that slipped into the results, and the live album only a flexi-disc,
-// so neither should count as having a vinyl pressing.
-const vinylRelease = (group, format, status = 'Official') => ({ status, 'release-group': { id: group }, media: [{ format }] });
-const VINYL_RELEASES = {
-  'a-radiohead': [
-    vinylRelease('rg-pablo', '12" Vinyl', 'Bootleg'),
-    vinylRelease('rg-pablo', 'CD'),
-    vinylRelease('rg-bends', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-kida', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl', 'Promotion'),
-    vinylRelease('rg-creep', '7" Vinyl'),
-    vinylRelease('rg-wrong', 'Flexi-disc'),
-  ],
-  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => vinylRelease(id, '12" Vinyl')),
+// The artists' releases, as browsing them with inc=media+release-groups returns them. Pablo Honey
+// only has a bootleg LP and a CD, and the live album only a flexi-disc, so neither counts as having
+// a vinyl pressing. The Bends has a deluxe edition on vinyl; Kid A's is CD only, so it only shows
+// with Vinyl only turned off. The Glastonbury recording only exists as a bootleg, so it isn't
+// among these at all, and only loads once Vinyl only is turned off.
+const pressing = (artistId, id, groupId, format, extra = {}) => {
+  const group = DISCOGRAPHIES[artistId].find((g) => g.id === groupId);
+  const formats = Array.isArray(format) ? format : [format];
+  return { id, status: 'Official', title: group.title, date: group['first-release-date'], 'release-group': group, media: formats.map((f) => ({ format: f })), ...extra };
 };
-
-// Answers to the "deluxe or expanded releases by this artist" search. The Bends has a deluxe
-// edition on vinyl; Kid A's is CD only, so it only shows with Vinyl only turned off.
-const DELUXE_RELEASES = {
+const RELEASES = {
   'a-radiohead': [
-    { id: 'rel-bends-dlx', title: 'The Bends', disambiguation: 'collector’s deluxe edition', date: '2009-03-24', status: 'Official', 'release-group': { id: 'rg-bends' }, media: [{ format: '12" Vinyl' }, { format: '12" Vinyl' }] },
-    { id: 'rel-kida-dlx', title: 'Kid A (Expanded Edition)', date: '2016-05-06', status: 'Official', 'release-group': { id: 'rg-kida' }, media: [{ format: 'CD' }] },
+    pressing('a-radiohead', 'rel-pablo-boot', 'rg-pablo', '12" Vinyl', { status: 'Bootleg' }),
+    pressing('a-radiohead', 'rel-pablo-cd', 'rg-pablo', 'CD'),
+    pressing('a-radiohead', 'rel-bends', 'rg-bends', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-bends-dlx', 'rg-bends', ['12" Vinyl', '12" Vinyl'], { disambiguation: 'collector’s deluxe edition', date: '2009-03-24' }),
+    pressing('a-radiohead', 'rel-okc', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-okc-2', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-kida', 'rg-kida', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-kida-dlx', 'rg-kida', 'CD', { title: 'Kid A (Expanded Edition)', date: '2016-05-06' }),
+    pressing('a-radiohead', 'rel-amnesiac-10', 'rg-amnesiac', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac', 'rg-amnesiac', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac-promo', 'rg-amnesiac', '12" Vinyl', { status: 'Promotion' }),
+    pressing('a-radiohead', 'rel-creep', 'rg-creep', '7" Vinyl'),
+    pressing('a-radiohead', 'rel-wrong', 'rg-wrong', 'Flexi-disc'),
+    pressing('a-radiohead', 'rel-glasto', 'rg-glasto', '12" Vinyl', { status: 'Bootleg' }),
   ],
+  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => pressing('a-portishead', `rel-${id}`, id, '12" Vinyl')),
 };
 
 // Answers to the album lookups for an imported list, by the title searched for. "Weezer" is two
@@ -93,10 +94,14 @@ function fakeMusicBrainz(url) {
     const title = /releasegroup:"([^"]+)"/.exec(query)[1];
     return { 'release-groups': ALBUM_LOOKUPS[title] || [] };
   }
-  if (url.pathname === '/ws/2/release' && query.startsWith('arid:')) {
-    const artistId = /arid:"([^"]+)"/.exec(query)[1];
-    const releases = (query.includes('format:') ? VINYL_RELEASES : DELUXE_RELEASES)[artistId] || [];
-    return { count: releases.length, offset: 0, releases };
+  if (url.pathname === '/ws/2/release-group' && query.includes('NOT secondarytype:')) {
+    const albums = (DISCOGRAPHIES[/arid:"([^"]+)"/.exec(query)[1]] || []).filter((g) => g['primary-type'] === 'Album' && !g['secondary-types'].length);
+    return { count: albums.length, 'release-groups': albums };
+  }
+  if (url.pathname === '/ws/2/release' && params.get('artist')) {
+    const statuses = (params.get('status') || '').split('|');
+    const releases = (RELEASES[params.get('artist')] || []).filter((r) => !params.get('status') || statuses.includes(r.status.toLowerCase()));
+    return { 'release-count': releases.length, 'release-offset': 0, releases };
   }
   if (url.pathname === '/ws/2/release' && !query.startsWith('barcode:')) {
     // Typed search: vinyl pressings, grouped into albums by the app. Two pressings of OK Computer
@@ -184,9 +189,11 @@ function fakeCover(id) {
 async function openApp(browser, options = {}) {
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, ...options });
   const mbCalls = [];
-  await context.route('https://musicbrainz.org/**', (route) => {
+  const hold = { browse: null };
+  await context.route('https://musicbrainz.org/**', async (route) => {
     const url = new URL(route.request().url());
     mbCalls.push(url);
+    if (hold.browse && url.pathname === '/ws/2/release' && url.searchParams.get('artist')) await hold.browse;
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -214,7 +221,7 @@ async function openApp(browser, options = {}) {
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) errors.push(msg.text());
   });
   await page.goto(PAGE_URL);
-  return { context, page, errors, mbCalls, coverCalls };
+  return { context, page, errors, mbCalls, coverCalls, hold };
 }
 
 async function shot(page, name) {
@@ -239,6 +246,10 @@ async function openTab(page, route) {
   }, route);
 }
 
+// The discography shows as soon as its studio albums are in, then again as each page of releases
+// arrives. This waits for the last of it.
+const discoReady = (page) => page.locator('#disco-panel[aria-busy="false"]').waitFor();
+
 async function assertNoJunkText(page, where) {
   const shown = await page.locator('main').innerText();
   assert.doesNotMatch(shown, /\b(null|undefined|NaN)\b/, `stray placeholder text on ${where}`);
@@ -247,7 +258,7 @@ async function assertNoJunkText(page, where) {
 test('add, browse, edit, shuffle and find missing records', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
-    const { context, page, errors, mbCalls, coverCalls } = await openApp(browser);
+    const { context, page, errors, mbCalls, coverCalls, hold } = await openApp(browser);
 
     // Empty shelf
     assert.ok(await page.locator('#collection-empty').isVisible());
@@ -415,9 +426,19 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     // Discography from a record in the collection: Radiohead already has a MusicBrainz id
     await openTab(page, 'collection');
     await page.locator('.record', { hasText: 'OK Computer' }).click();
+    // The studio albums show at once. Until every release has been checked for vinyl, none says
+    // "Vinyl not confirmed". Holding back the release browse keeps the page in that state.
+    let letBrowseThrough;
+    hold.browse = new Promise((resolve) => { letBrowseThrough = resolve; });
     await page.click('#edit-discography');
-    await page.locator('#disco-panel').waitFor();
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
     assert.equal(await text(page, '#disco-name'), 'Radiohead');
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 5');
+    assert.equal(await text(page, '#disco-missing'), 'Pablo Honey\n1993 · Album\nWishlist\nGot it\nAmnesiac\n2001 · Album\nWishlist\nGot it');
+    assert.match(await text(page, '#artist-status'), /Checking which releases came out on vinyl/);
+    hold.browse = null;
+    letBrowseThrough();
+    await discoReady(page);
     // Vinyl only is on by default. Pablo Honey has no official vinyl in MusicBrainz, but it's a studio
     // album, so it's listed anyway as "Vinyl not confirmed". The Bends has a deluxe edition on vinyl,
     // which gets its own line right after the original.
@@ -434,8 +455,13 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await assertNoJunkText(page, 'discography');
     await shot(page, '06-discography');
 
-    // Turning it off shows everything, including the CD-only expanded edition
+    // Turning it off shows everything, including the CD-only expanded edition. It also loads the
+    // albums with no official release, like the bootleg Glastonbury recording, so Live counts two.
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
+    await page.locator('.toggle', { hasText: 'Live' }).locator('.toggle-count', { hasText: '2' }).waitFor();
+    await discoReady(page);
+    assert.equal(mbCalls.at(-1).pathname, '/ws/2/release-group');
+    assert.equal(mbCalls.at(-1).searchParams.get('artist'), 'a-radiohead');
     assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 7');
     assert.match(await text(page, '#disco-missing'), /Kid A \(Expanded Edition\)\n2016 · Album\nVinyl not confirmed\nConfirm/);
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
@@ -517,8 +543,9 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     const callsBefore = mbCalls.length;
     await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
     await page.locator('#disco-name', { hasText: 'Portishead' }).waitFor();
+    await discoReady(page);
     assert.equal(await text(page, '#disco-progress-text'), 'You have 1 of 3');
-    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release', '/ws/2/release']);
+    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release']);
     const linked = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.title === 'Dummy').artistId);
     assert.equal(linked, 'a-portishead');
 
@@ -533,6 +560,28 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(await text(page, '#nav-count'), '7');
     await page.goto(`${PAGE_URL}#discography`);
     await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+
+    // A saved copy more than a week old still shows at once, while a new one loads behind it
+    await page.evaluate((key) => {
+      const saved = JSON.parse(localStorage.getItem(key));
+      saved['a-radiohead'].fetchedAt -= 10 * 24 * 60 * 60 * 1000;
+      localStorage.setItem(key, JSON.stringify(saved));
+    }, 'recordcatalog.discographies.v6');
+    await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
+    await discoReady(page);
+    let letRefreshThrough;
+    hold.browse = new Promise((resolve) => { letRefreshThrough = resolve; });
+    await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+    assert.match(await text(page, '#disco-updated'), /Updated 10 days ago/);
+    assert.match(await text(page, '#disco-missing'), /Pablo Honey\n1993 · Album\nVinyl not confirmed/, 'the saved copy keeps its labels');
+    assert.match(await text(page, '#artist-status'), /Checking MusicBrainz for changes/);
+    hold.browse = null;
+    letRefreshThrough();
+    await discoReady(page);
+    assert.match(await text(page, '#disco-updated'), /Updated just now/);
     assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
 
     // Backup, wipe, restore
@@ -894,7 +943,7 @@ test('fits a phone screen in light and dark mode', { skip: !chromium && 'playwri
         if (view === 'random') await page.click('#spin-btn');
         if (view === 'discography') {
           await page.selectOption('#disco-artist', { label: 'Radiohead (2)' });
-          await page.locator('#disco-panel').waitFor();
+          await discoReady(page);
         }
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 0, `${view} (${colorScheme}) scrolls sideways by ${overflow}px`);

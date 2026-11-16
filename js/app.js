@@ -739,9 +739,19 @@
 
   // ---------- Discography ----------
 
-  let disco = null; // { artist: { id, name }, groups, total, truncated, fetchedAt }
+  // { artist: { id, name }, groups, total, truncated, vinylComplete, allGroups, fetchedAt, loading }.
+  // loading is true until every release has been checked for vinyl.
+  let disco = null;
   let discoToken = 0;
+  let discoLoad = null; // stops the requests under way for the artist on screen
   let currentMissing = [];
+
+  // Picking another artist, or searching for one, stops the requests for the last one.
+  function nextDiscoToken() {
+    if (discoLoad) discoLoad.abort();
+    discoLoad = null;
+    return ++discoToken;
+  }
 
   function renderDiscoArtists() {
     const select = $('#disco-artist');
@@ -778,7 +788,7 @@
       return;
     }
 
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
     $('#disco-panel').hidden = true;
     setStatus('#artist-status', `Looking up ${name} on MusicBrainz…`, 'busy');
@@ -820,7 +830,7 @@
     event.preventDefault();
     const query = event.target.elements.q.value.trim();
     if (!query) return;
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
     setStatus('#artist-status', 'Searching MusicBrainz…', 'busy');
     try {
@@ -833,34 +843,97 @@
     }
   }
 
+  function discoStatus(doing, { loaded, total }) {
+    setStatus('#artist-status', total > 100 ? `${doing}… ${loaded} of ${total}` : `${doing}…`, 'busy');
+  }
+
+  function showDiscography(data, artist, loading) {
+    disco = { ...data, artist: { id: artist.id, name: artist.name }, loading };
+    renderDiscography();
+    $('#disco-panel').hidden = false;
+    $('#disco-panel').setAttribute('aria-busy', String(loading || Boolean(discoLoad)));
+  }
+
+  // Requests for the artist on screen are under way. The panel says so, and picking another artist
+  // or tapping Refresh stops them.
+  function startDiscoLoad() {
+    discoLoad = new AbortController();
+    $('#disco-panel').setAttribute('aria-busy', 'true');
+    return discoLoad.signal;
+  }
+
+  // What came in stays on screen. Refresh tries again.
+  function discoLoadFailed(e) {
+    discoLoad = null;
+    setStatus('#artist-status', e.message, 'error');
+    $('#disco-panel').setAttribute('aria-busy', 'false');
+  }
+
+  /*
+   * A saved copy shows at once. Once it's a week old, or on Refresh, a new copy loads behind it and
+   * takes its place when complete. Without one, the studio albums show after the first request and
+   * the rest fills in as each page of releases arrives, with no "Vinyl not confirmed" until the end.
+   */
   async function loadDiscography(artist, refresh) {
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
-    let data = refresh ? null : store.getDiscography(artist.id);
-    if (!data) {
-      $('#disco-panel').hidden = true;
-      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
-      try {
-        const fetched = await mb.getDiscography(artist.id, ({ step, loaded, total }) => {
-          if (token !== discoToken) return;
-          const doing = {
-            releases: `Loading the discography for ${artist.name}`,
-            vinyl: 'Checking which releases came out on vinyl',
-            deluxe: 'Looking for deluxe editions',
-          }[step];
-          setStatus('#artist-status', total > 100 ? `${doing}… ${loaded} of ${total}` : `${doing}…`, 'busy');
-        });
-        data = store.saveDiscography(artist.id, { name: artist.name, ...fetched });
-      } catch (e) {
-        if (token === discoToken) setStatus('#artist-status', e.message, 'error');
+    const saved = store.getDiscography(artist.id);
+    if (saved) {
+      setStatus('#artist-status', '');
+      showDiscography(saved, artist, false);
+      if (!refresh && !store.discographyStale(saved)) {
+        loadAllGroups();
         return;
       }
     }
+    const signal = startDiscoLoad();
+    const update = (progress) => {
+      if (token !== discoToken) return;
+      if (saved) {
+        discoStatus('Checking MusicBrainz for changes', progress);
+        return;
+      }
+      showDiscography({ name: artist.name, ...progress.discography, fetchedAt: Date.now() }, artist, true);
+      discoStatus(progress.step === 'groups' ? 'Loading the rest of the discography' : 'Checking which releases came out on vinyl', progress);
+    };
+    if (saved) setStatus('#artist-status', 'Checking MusicBrainz for changes…', 'busy');
+    else {
+      $('#disco-panel').hidden = true;
+      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
+    }
+    let data;
+    try {
+      data = store.saveDiscography(artist.id, { name: artist.name, ...(await mb.getDiscography(artist.id, update, { signal })) });
+    } catch (e) {
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
+    }
     if (token !== discoToken) return;
+    discoLoad = null;
     setStatus('#artist-status', '');
-    disco = { ...data, artist: { id: artist.id, name: artist.name } };
-    renderDiscography();
-    $('#disco-panel').hidden = false;
+    showDiscography(data, artist, false);
+    loadAllGroups();
+  }
+
+  // With Vinyl only off, the list also shows albums, EPs and singles that have no official release,
+  // mostly bootlegs. They're fetched the first time they're needed and kept with the discography.
+  async function loadAllGroups() {
+    if (!disco || disco.loading || disco.allGroups || store.getPref('vinylOnly', true) || discoLoad) return;
+    const token = discoToken;
+    const { artist, loading, ...saved } = disco;
+    const signal = startDiscoLoad();
+    setStatus('#artist-status', 'Loading the rest of the discography…', 'busy');
+    let whole;
+    try {
+      whole = await mb.addAllReleaseGroups(saved, artist.id, (progress) => token === discoToken && discoStatus('Loading the rest of the discography', progress), { signal });
+    } catch (e) {
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
+    }
+    if (token !== discoToken) return;
+    discoLoad = null;
+    setStatus('#artist-status', '');
+    showDiscography(store.saveDiscography(artist.id, whole), artist, false);
   }
 
   function enabledCategories() {
@@ -885,7 +958,8 @@
     // MusicBrainz, or a 45 or 10" one when those are turned on. Studio albums are the exception: they
     // show even without one, marked "Vinyl not confirmed", because MusicBrainz is often missing the
     // vinyl pressings of albums that have them. Deluxe editions still need one (many are digital only).
-    // A release you've confirmed, or own on vinyl, counts as having one.
+    // A release you've confirmed, or own on vinyl, counts as having one. Until every release has
+    // been checked, no line says "Vinyl not confirmed".
     const small = smallRecords();
     const listedOnVinyl = (item) => item.vinyl || (small && item.small);
     const onVinyl = (item) => listedOnVinyl(item) || store.isVinylConfirmed(item.key);
@@ -895,7 +969,7 @@
 
     $('#disco-filters').replaceChildren(
       h('label', { class: 'toggle' },
-        h('input', { type: 'checkbox', checked: vinylOnly, onchange: (e) => { store.setPref('vinylOnly', e.target.checked); renderDiscography(); } }),
+        h('input', { type: 'checkbox', checked: vinylOnly, onchange: (e) => { store.setPref('vinylOnly', e.target.checked); renderDiscography(); loadAllGroups(); } }),
         'Vinyl only'),
       h('label', { class: 'toggle' },
         h('input', { type: 'checkbox', checked: small, onchange: (e) => setSmallRecords(e.target.checked) }),
@@ -918,7 +992,8 @@
 
     let progress = `You have ${owned.length} of ${visible.length}`;
     if (!visible.length) {
-      if (!disco.groups.length) progress = 'MusicBrainz lists no releases for this artist yet.';
+      if (disco.loading) progress = 'Loading…';
+      else if (!disco.groups.length) progress = 'MusicBrainz lists no releases for this artist yet.';
       else if (vinylOnly && !eligible.length) progress = 'MusicBrainz lists no vinyl releases for this artist. Turn off Vinyl only to see everything.';
       else progress = 'Nothing of these types. Turn on another type below.';
     }
@@ -926,9 +1001,9 @@
     $('#disco-progress-text').textContent = progress;
     $('#disco-bar').style.width = visible.length ? `${(owned.length / visible.length) * 100}%` : '0';
     $('#disco-updated').textContent = meta(
-      `Updated ${ago(disco.fetchedAt)}`,
+      !disco.loading && `Updated ${ago(disco.fetchedAt)}`,
       disco.truncated && `Showing the first ${disco.groups.length} of ${disco.total} releases`,
-      disco.vinylComplete === false && 'This artist has a huge number of vinyl releases, so a few may be missed');
+      disco.vinylComplete === false && 'This artist has a huge number of releases, so a few may be missed');
 
     const itemCover = (item) => cover({ releaseGroupId: item.group.id, artist: disco.artist.name, title: item.title }, 'sm');
 
@@ -942,7 +1017,7 @@
         h('div', { class: 'result-text' },
           h('span', { class: 'record-title' }, item.title),
           h('span', { class: 'record-meta' }, meta(mb.yearOf(item.date), typeLabel(item.group))),
-          listedOnVinyl(item) ? null : vinylNote(item.key, item.title, item.small ? 'Only on 45 or 10"' : 'Vinyl not confirmed')),
+          listedOnVinyl(item) || disco.loading ? null : vinylNote(item.key, item.title, item.small ? 'Only on 45 or 10"' : 'Vinyl not confirmed')),
         h('div', { class: 'actions' },
           wish
             ? h('button', { type: 'button', class: 'small wished', onclick: () => unwishWithUndo(wish) }, 'On wishlist')
