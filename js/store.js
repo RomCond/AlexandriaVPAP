@@ -1247,6 +1247,7 @@
     similarity,
     bestAlbumMatch,
     mergeSyncStates,
+    readSyncState,
     memoryStorage,
     createStore,
   };
