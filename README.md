@@ -27,6 +27,8 @@ Any static host, such as GitHub Pages or Netlify, works too.
 
 The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist. To load it somewhere else, tap **Import** and choose the file. Importing a backup merges it with what's there and skips albums you already have.
 
+To keep the same collection on your phone and your computer, set up sync with Firebase. [Set up sync with Firebase](docs/firebase-setup.md) walks through it. You then sign in with Google under **Sync between devices** at the bottom of the Collection page, and each device syncs when you sign in and when you tap **Sync now**. Until `js/sync-config.js` is filled in, the app hides sync and loads nothing from Firebase.
+
 MusicBrainz allows about one request per second. The search box waits for a short pause in typing and cancels searches you've typed past. The app saves each discography you open and shows the saved copy at once next time. Once it's a week old, the app also loads a new copy behind it and swaps it in when it's complete. After four weeks it loads from scratch. **Refresh** on an artist loads a new copy the same way. When MusicBrainz is busy or the connection drops, the app tries the request again after 2, 4, 8 and 16 seconds, then shows an error. On a device that's offline, the app shows the error after the first wait of 2 seconds.
 
 ## Importing records
@@ -80,7 +82,11 @@ css/styles.css        styles, light and dark
 js/store.js           records, backups, caching, and the matching logic
 js/xlsx.js            reads the sheets of an Excel file
 js/musicbrainz.js     MusicBrainz and Cover Art Archive client
+js/sync.js            sync between devices through Firebase
+js/sync-config.js     your Firebase project's web config
 js/app.js             the UI
+firestore.rules       the access rules to publish in the Firebase console
+docs/                 setup guide and design notes
 tests/                unit tests and browser tests
 ```
 
