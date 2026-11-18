@@ -806,6 +806,28 @@ button.wished {
   margin-top: 24px;
 }
 
+.sync-panel {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.sync-panel h2 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.sync-account code { overflow-wrap: anywhere; }
+
 .empty {
   padding: 32px 16px;
   text-align: center;

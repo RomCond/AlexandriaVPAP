@@ -1073,17 +1073,21 @@
     };
   }
 
-  async function copyMissing() {
+  async function copyText(text, done) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(done);
+    } catch (e) {
+      toast("Couldn't copy. Your browser blocked the clipboard.");
+    }
+  }
+
+  function copyMissing() {
     const lines = currentMissing.map((item) => {
       const year = mb.yearOf(item.date);
       return `${disco.artist.name} - ${item.title}${year ? ` (${year})` : ''}`;
     });
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
-      toast(`Copied ${plural(lines.length, 'title')}`);
-    } catch (e) {
-      toast("Couldn't copy. Your browser blocked the clipboard.");
-    }
+    return copyText(lines.join('\n'), `Copied ${plural(lines.length, 'title')}`);
   }
 
   // ---------- Backup ----------
@@ -1095,6 +1099,59 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  // ---------- Sync between devices ----------
+
+  // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
+  // once js/sync-config.js is filled in, and the panel stays hidden until then.
+  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService });
+
+  const SYNC_PROBLEMS = {
+    notAllowed: (user) => `This Google account can't sync. If it's yours, put its account id${user ? `, ${user.id},` : ''} in the access rules in the Firebase console.`,
+    offline: () => "Couldn't reach the sync service. Check your connection and try again.",
+    domainNotAuthorized: () => "Firebase doesn't allow sign-in from this site's address yet. Add it to the authorized domains in the Firebase console.",
+    googleSignInOff: () => "Google sign-in isn't turned on in the Firebase console yet.",
+    popupBlocked: () => 'Your browser blocked the sign-in window. Allow pop-ups for this site and try again.',
+    failed: (user, message) => `Sync didn't work. ${message}`.trim(),
+  };
+
+  function syncedWhen(time) {
+    const minutes = Math.floor((Date.now() - Date.parse(time)) / 60000);
+    if (minutes < 1) return 'Synced just now.';
+    if (minutes < 60) return `Synced ${plural(minutes, 'minute')} ago.`;
+    if (minutes < 24 * 60) return `Synced ${plural(Math.floor(minutes / 60), 'hour')} ago.`;
+    return `Synced on ${new Date(time).toLocaleDateString()}.`;
+  }
+
+  // The panel under the backup buttons: sign in, sync, and what went wrong if anything did.
+  function renderSync() {
+    const panel = $('#sync');
+    const { phase, user, problem, syncedAt } = sync.state;
+    panel.hidden = phase === 'off' || phase === 'starting';
+    if (panel.hidden) return;
+    const busy = phase === 'signingIn' || phase === 'syncing';
+    const parts = [h('h2', { id: 'sync-heading' }, 'Sync between devices')];
+    if (phase === 'unavailable') {
+      parts.push(h('p', { class: 'muted small' }, "Sync couldn't start. Check your connection and reload the page."));
+    } else if (!user) {
+      parts.push(
+        h('p', { class: 'muted small' }, 'Sign in with the same Google account on each device to keep one collection on all of them.'),
+        h('button', { type: 'button', id: 'sync-sign-in', disabled: busy, onclick: () => sync.signIn() }, phase === 'signingIn' ? 'Signing in…' : 'Sign in with Google'));
+    } else {
+      const when = phase === 'syncing' ? 'Syncing…' : syncedAt ? syncedWhen(syncedAt) : 'Not synced on this device yet.';
+      parts.push(
+        h('p', { class: 'muted small', id: 'sync-status' }, `Signed in as ${user.email || 'your Google account'}. ${when}`),
+        h('div', { class: 'sync-actions' },
+          h('button', { type: 'button', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now'),
+          h('button', { type: 'button', class: 'link', id: 'sync-sign-out', disabled: busy, onclick: () => sync.signOut() }, 'Sign out')),
+        h('details', { class: 'small sync-account' },
+          h('summary', {}, 'Account id for the access rules'),
+          h('code', { id: 'sync-account-id' }, user.id),
+          h('button', { type: 'button', class: 'link small', onclick: () => copyText(user.id, 'Copied the account id') }, 'Copy')));
+    }
+    if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](user, problem.message)));
+    panel.replaceChildren(...parts);
   }
 
   // ---------- Importing ----------
@@ -1470,7 +1527,10 @@
     if (!lookup.running && !lookup.error && store.all().some((record) => record.pendingLookup)) runLookups();
   });
 
+  sync.onChange(renderSync);
+  window.addEventListener('storage', () => store.reload());
   window.addEventListener('hashchange', showView);
+  renderSync();
   renderCollection();
   showView();
   if (store.all().some((record) => record.pendingLookup)) runLookups();

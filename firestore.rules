@@ -1,0 +1,26 @@
+rules_version = '2';
+
+// Access rules for syncing Record Catalog between your devices. Only one Google account can read or
+// write, and only its own sync documents.
+//
+// Before you publish these rules, replace PASTE_YOUR_ACCOUNT_ID_HERE with the account id the app shows
+// under "Account id for the access rules" after you sign in. Then paste the rules into the Rules tab
+// of Firestore Database in the Firebase console and click Publish. docs/firebase-setup.md has the steps.
+// Keep the filled-in copy out of this repository, which is public.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/sync/{bucket} {
+      function isOwner() {
+        return request.auth != null
+          && request.auth.uid == userId
+          && userId == 'PASTE_YOUR_ACCOUNT_ID_HERE';
+      }
+
+      allow read: if isOwner();
+      allow create, update: if isOwner()
+        && bucket.matches('[0-9a-f]')
+        && request.resource.data.keys().hasOnly(['state'])
+        && request.resource.data.state is string;
+    }
+  }
+}

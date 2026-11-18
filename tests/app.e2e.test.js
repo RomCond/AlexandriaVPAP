@@ -200,8 +200,15 @@ function fakeCover(id) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="hsl(${hue} 45% 45%)"/><text x="8" y="90" font-family="Georgia" font-size="12" fill="#fff">${id}</text></svg>`;
 }
 
-async function openApp(browser, options = {}) {
+// `setup` runs on the browser context before the page opens, as fakeSyncService's install does.
+async function openApp(browser, { setup, ...options } = {}) {
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, ...options });
+  // Nothing here reaches Firebase. A request to it is recorded and stopped.
+  const firebaseCalls = [];
+  await context.route(/^https:\/\/(www\.gstatic\.com\/firebasejs\/|[^/]+\.firebaseapp\.com\/|(firestore|identitytoolkit|securetoken)\.googleapis\.com\/)/, (route) => {
+    firebaseCalls.push(route.request().url());
+    route.abort();
+  });
   const mbCalls = [];
   const hold = { browse: null };
   await context.route('https://musicbrainz.org/**', async (route) => {
@@ -228,6 +235,7 @@ async function openApp(browser, options = {}) {
   });
   // Fonts come from Google Fonts in real use; an empty stylesheet keeps the test offline.
   await context.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  if (setup) await setup(context);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -235,7 +243,66 @@ async function openApp(browser, options = {}) {
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) errors.push(msg.text());
   });
   await page.goto(PAGE_URL);
-  return { context, page, errors, mbCalls, coverCalls, hold };
+  return { context, page, errors, mbCalls, coverCalls, hold, firebaseCalls };
+}
+
+/*
+ * A sync service that stands in for Firebase, given to the page as RC.syncService. Every device
+ * installed with the same fake shares its buckets, the way two devices signed in to one account share
+ * a Firestore database. Set `fail` to a Firebase error code to make reads and writes fail with it.
+ */
+function fakeSyncService() {
+  const fake = { buckets: new Map(), fail: null, account: { id: 'test-account-id', email: 'owner@example.com' } };
+  fake.install = async (context) => {
+    await context.exposeFunction('fakeSync', (action, writes) => {
+      if (action === 'signIn') return { user: fake.account };
+      if (fake.fail) return { error: fake.fail };
+      if (action === 'read') return { buckets: Object.fromEntries(fake.buckets) };
+      for (const [id, text] of Object.entries(writes)) fake.buckets.set(id, text);
+      return {};
+    });
+    await context.addInitScript(() => {
+      let user = null;
+      const watchers = [];
+      const tell = () => watchers.forEach((watcher) => watcher(user));
+      const call = async (action, writes) => {
+        const reply = await window.fakeSync(action, writes);
+        if (reply.error) throw Object.assign(new Error(`Fake sync: ${reply.error}`), { code: reply.error });
+        return reply;
+      };
+      window.RC = {
+        syncService: {
+          watchUser(callback) {
+            watchers.push(callback);
+            callback(user);
+          },
+          async signIn() {
+            user = (await call('signIn')).user;
+            tell();
+            return user;
+          },
+          async signOut() {
+            user = null;
+            tell();
+          },
+          async exchange(change) {
+            const stored = new Map(Object.entries((await call('read')).buckets));
+            await call('write', Object.fromEntries(change(stored)));
+          },
+        },
+      };
+    });
+  };
+  return fake;
+}
+
+async function addByHand(page, artist, title) {
+  await openTab(page, 'add');
+  const form = page.locator('#manual-form');
+  if (!(await form.isVisible())) await page.click('#manual-add summary');
+  await form.locator('[name=artist]').fill(artist);
+  await form.locator('[name=title]').fill(title);
+  await form.locator('button[type=submit]').click();
 }
 
 async function shot(page, name) {
@@ -826,6 +893,113 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('two tabs open at once keep both their changes', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page: first, errors } = await openApp(browser);
+    const second = await context.newPage();
+    second.on('pageerror', (err) => errors.push(err.message));
+    await second.goto(PAGE_URL);
+
+    await addByHand(first, 'Steely Dan', 'Aja');
+    await second.locator('#nav-count', { hasText: '1' }).waitFor({ timeout: 5000 });
+    await addByHand(second, 'Radiohead', 'OK Computer');
+    await first.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    await first.reload();
+    assert.equal(await text(first, '#nav-count'), '2');
+    const saved = await first.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(saved, ['Aja', 'OK Computer']);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+const syncConfigFilledIn = !fs.readFileSync(path.join(__dirname, '..', 'js', 'sync-config.js'), 'utf8').includes('PASTE_');
+
+test('sync stays hidden and loads nothing from Firebase until it is set up', { skip: (!chromium && 'playwright is not installed') || (syncConfigFilledIn && 'js/sync-config.js is filled in') }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, firebaseCalls } = await openApp(browser);
+    assert.equal(await page.locator('#sync').isHidden(), true);
+    assert.deepEqual(firebaseCalls, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('two devices sync their collections after signing in', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const pc = await openApp(browser, { setup: fake.install });
+    const phone = await openApp(browser, { setup: fake.install, viewport: { width: 390, height: 844 } });
+    await addByHand(pc.page, 'Steely Dan', 'Aja');
+    await addByHand(phone.page, 'Can', 'Tago Mago');
+
+    await openTab(pc.page, 'collection');
+    assert.match(await text(pc.page, '#sync'), /Sign in with the same Google account on each device/);
+    await pc.page.click('#sync-sign-in');
+    await pc.page.locator('#sync-status', { hasText: 'Signed in as owner@example.com. Synced just now.' }).waitFor({ timeout: 5000 });
+
+    await openTab(phone.page, 'collection');
+    await phone.page.click('#sync-sign-in');
+    await phone.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    await shot(phone.page, 'sync-signed-in');
+
+    await pc.page.click('#sync-now');
+    await pc.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(await titles(pc.page), ['Aja', 'Tago Mago']);
+    assert.deepEqual(await titles(phone.page), ['Aja', 'Tago Mago']);
+
+    await pc.page.click('#sync .sync-account summary');
+    assert.equal(await text(pc.page, '#sync-account-id'), 'test-account-id');
+
+    await phone.page.click('#sync-sign-out');
+    await phone.page.locator('#sync-sign-in').waitFor();
+    assert.equal(await text(phone.page, '#nav-count'), '2', 'signing out keeps the records');
+
+    assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
+    assert.deepEqual([...pc.errors, ...phone.errors], []);
+    await pc.context.close();
+    await phone.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sync says what went wrong, with the account id when the account is not allowed', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install });
+    fake.fail = 'permission-denied';
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-problem').waitFor({ timeout: 5000 });
+    assert.equal(await text(page, '#sync-problem'), "This Google account can't sync. If it's yours, put its account id, test-account-id, in the access rules in the Firebase console.");
+
+    fake.fail = 'unavailable';
+    await page.click('#sync-now');
+    await page.locator('#sync-problem', { hasText: "Couldn't reach the sync service." }).waitFor({ timeout: 5000 });
+
+    fake.fail = null;
+    await page.click('#sync-now');
+    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#sync-problem').count(), 0);
+
+    assert.deepEqual(firebaseCalls, []);
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

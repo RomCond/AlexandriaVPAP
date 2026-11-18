@@ -287,6 +287,311 @@ test('readImport knows a backup from a list that starts with a bracket', () => {
   assert.deepEqual([list.kind, list.items[0].artist], ['list', '[Signed] Rush']);
 });
 
+test('records remember when they last changed', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const record = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  assert.equal(record.updatedAt, '2026-01-01T00:00:00.000Z');
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  store.update(record.id, { notes: 'Signed' });
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  const saved = S.createStore(storage).get(record.id);
+  assert.equal(saved.updatedAt, '2026-02-01T00:00:00.000Z');
+  assert.equal(saved.addedAt, '2026-01-01T00:00:00.000Z');
+
+  store.linkArtist('Steely Dan', 'sd');
+  assert.equal(store.get(record.id).updatedAt, '2026-03-01T00:00:00.000Z');
+
+  t.mock.timers.setTime(Date.parse('2026-04-01T00:00:00Z'));
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Ege Bamyasi' });
+  t.mock.timers.setTime(Date.parse('2026-05-01T00:00:00Z'));
+  store.removeFromWishlist(wish.id);
+  const got = store.add({ ...wish, id: null, addedAt: null });
+  assert.equal(got.updatedAt, '2026-05-01T00:00:00.000Z', 'a wish you got counts as changed when you got it');
+});
+
+test('backups keep the time each record last changed', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const source = S.createStore(S.memoryStorage());
+  source.add({ artist: 'Steely Dan', title: 'Aja' });
+
+  t.mock.timers.setTime(Date.parse('2026-06-01T00:00:00Z'));
+  const target = S.createStore(S.memoryStorage());
+  restore(target, source.exportJSON());
+  restore(target, JSON.stringify([{ artist: 'Can', title: 'Tago Mago', addedAt: '2020-05-05T00:00:00.000Z' }]));
+  const byTitle = Object.fromEntries(target.all().map((r) => [r.title, r.updatedAt]));
+  assert.equal(byTitle.Aja, '2026-01-01T00:00:00.000Z');
+  assert.equal(byTitle['Tago Mago'], '2020-05-05T00:00:00.000Z', 'an older backup counts from when the record was added');
+});
+
+test('deleting leaves a marker with the time, and adding it back clears the marker', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const aja = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  const gaucho = store.add({ artist: 'Steely Dan', title: 'Gaucho' });
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Tago Mago' });
+  const gotIt = store.addToWishlist({ artist: 'Can', title: 'Ege Bamyasi' });
+  store.confirmVinyl('rg-x');
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  const at = '2026-02-01T00:00:00.000Z';
+  store.remove(aja.id);
+  store.removeMany([gaucho.id]);
+  store.removeFromWishlist(wish.id);
+  store.add({ ...gotIt, id: null, addedAt: null });
+  store.unconfirmVinyl('rg-x');
+  assert.deepEqual(S.createStore(storage).syncState().deleted, {
+    records: { [aja.id]: at, [gaucho.id]: at },
+    wishlist: { [wish.id]: at, [gotIt.id]: at },
+    confirmed: { 'rg-x': at },
+  });
+
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  store.add(aja);
+  store.addToWishlist(wish);
+  store.confirmVinyl('rg-x');
+  const state = S.createStore(storage).syncState();
+  assert.deepEqual(state.deleted, { records: { [gaucho.id]: at }, wishlist: { [gotIt.id]: at }, confirmed: {} });
+  assert.equal(state.confirmed['rg-x'], '2026-03-01T00:00:00.000Z');
+});
+
+test('confirmations saved before they had times are kept, with an unknown time', () => {
+  const storage = S.memoryStorage();
+  storage.setItem('recordcatalog.confirmed.v1', JSON.stringify(['rg-a', 'rg-b:deluxe']));
+  const store = S.createStore(storage);
+  assert.equal(store.confirmedByYou('rg-a'), true);
+  assert.deepEqual(store.syncState().confirmed, { 'rg-a': '1970-01-01T00:00:00.000Z', 'rg-b:deluxe': '1970-01-01T00:00:00.000Z' });
+  assert.equal(S.createStore(storage).confirmedByYou('rg-b:deluxe'), true, 'still there the next time the app opens');
+});
+
+test('importing a backup brings back what you deleted, as a change made now', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const store = S.createStore(S.memoryStorage());
+  const aja = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  const wish = store.addToWishlist({ artist: 'Can', title: 'Tago Mago' });
+  store.confirmVinyl('rg-x');
+  const backup = store.exportJSON();
+
+  t.mock.timers.setTime(Date.parse('2026-02-01T00:00:00Z'));
+  store.remove(aja.id);
+  store.removeFromWishlist(wish.id);
+  store.unconfirmVinyl('rg-x');
+  t.mock.timers.setTime(Date.parse('2026-03-01T00:00:00Z'));
+  restore(store, backup);
+  const state = store.syncState();
+  assert.equal(state.records[0].updatedAt, '2026-03-01T00:00:00.000Z');
+  assert.equal(state.wishlist[0].updatedAt, '2026-03-01T00:00:00.000Z');
+  assert.equal(state.confirmed['rg-x'], '2026-03-01T00:00:00.000Z');
+  assert.deepEqual(state.deleted, { records: {}, wishlist: {}, confirmed: {} });
+
+  const elsewhere = S.createStore(S.memoryStorage());
+  restore(elsewhere, backup);
+  assert.equal(elsewhere.syncState().confirmed['rg-x'], '1970-01-01T00:00:00.000Z', 'a backup does not say when you confirmed');
+});
+
+const at = (month) => `2026-${String(month).padStart(2, '0')}-01T00:00:00.000Z`;
+const steelyDan = (id, title, fields = {}) => ({ id, artist: 'Steely Dan', title, format: 'LP', addedAt: at(1), ...fields });
+function syncState({ records = [], wishlist = [], confirmed = {}, deleted = {} } = {}) {
+  return { records, wishlist, confirmed, deleted: { records: {}, wishlist: {}, confirmed: {}, ...deleted } };
+}
+const titles = (list) => list.map((record) => record.title);
+
+test('a merge keeps the newer copy of each record, as a whole, and every record from either side', () => {
+  const mine = syncState({ records: [steelyDan('aja', 'Aja', { notes: 'Signed', updatedAt: at(2) }), steelyDan('gaucho', 'Gaucho')] });
+  const theirs = syncState({ records: [steelyDan('aja', 'Aja', { format: 'Double LP', notes: '', updatedAt: at(3) }), steelyDan('katy', 'Katy Lied')] });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(merged.records.find((r) => r.id === 'aja'), theirs.records[0]);
+  assert.deepEqual(merged.records.map((r) => r.id).sort(), ['aja', 'gaucho', 'katy']);
+});
+
+test('a record saved before records had a change time counts from when it was added', () => {
+  const mine = syncState({ records: [steelyDan('aja', 'Aja', { addedAt: at(3) }), steelyDan('gaucho', 'Gaucho', { addedAt: at(1) })] });
+  const theirs = syncState({ deleted: { records: { aja: at(2), gaucho: at(2) } } });
+  assert.deepEqual(titles(S.mergeSyncStates(mine, theirs).records), ['Aja']);
+});
+
+test('a deletion wins over any copy that is not newer, and a later edit brings the record back', () => {
+  const mine = syncState({ records: [steelyDan('aja', 'Aja', { updatedAt: at(2) }), steelyDan('gaucho', 'Gaucho', { updatedAt: at(4) }), steelyDan('katy', 'Katy Lied', { updatedAt: at(3) })] });
+  const theirs = syncState({ deleted: { records: { aja: at(3), gaucho: at(3), katy: at(3) } } });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(titles(merged.records), ['Gaucho']);
+  assert.deepEqual(merged.deleted.records, { aja: at(3), katy: at(3) }, 'a deletion at the same moment as an edit wins');
+
+  const deletedTwice = S.mergeSyncStates(syncState({ deleted: { records: { aja: at(2) } } }), syncState({ deleted: { records: { aja: at(4) } } }));
+  const editedBetween = syncState({ records: [steelyDan('aja', 'Aja', { updatedAt: at(3) })] });
+  assert.deepEqual(S.mergeSyncStates(deletedTwice, editedBetween).records, [], 'the later of two deletions counts');
+});
+
+test('the wishlist merges the same way as the records', () => {
+  const mine = syncState({ wishlist: [steelyDan('w1', 'Aja', { notes: 'Any pressing', updatedAt: at(2) }), steelyDan('w2', 'Gaucho', { updatedAt: at(2) })] });
+  const theirs = syncState({ wishlist: [steelyDan('w1', 'Aja', { notes: 'Japan pressing', updatedAt: at(3) })], deleted: { wishlist: { w2: at(3) } } });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(merged.wishlist.map((w) => w.notes), ['Japan pressing']);
+  assert.deepEqual(merged.deleted.wishlist, { w2: at(3) });
+});
+
+test('a vinyl confirmation follows the latest change on either device', () => {
+  const mine = syncState({ confirmed: { 'rg-a': at(1), 'rg-old': '1970-01-01T00:00:00.000Z' }, deleted: { confirmed: { 'rg-b': at(2) } } });
+  const theirs = syncState({ confirmed: { 'rg-b': at(3), 'rg-c': at(1) }, deleted: { confirmed: { 'rg-a': at(2), 'rg-old': at(1) } } });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(merged.confirmed, { 'rg-b': at(3), 'rg-c': at(1) });
+  assert.deepEqual(merged.deleted.confirmed, { 'rg-a': at(2), 'rg-old': at(1) });
+});
+
+test('a merge keeps one copy per album, the one added first', () => {
+  const mine = syncState({ records: [
+    steelyDan('m-aja', 'Aja', { releaseGroupId: 'rg-aja', addedAt: at(2) }),
+    steelyDan('m-gaucho', 'gaucho', { addedAt: at(1) }),
+  ] });
+  const theirs = syncState({ records: [
+    steelyDan('t-aja', 'Aja', { releaseGroupId: 'rg-aja', notes: 'Second copy', addedAt: at(1) }),
+    steelyDan('t-gaucho', 'Gaucho (Remastered)', { releaseGroupId: 'rg-gaucho', addedAt: at(2) }),
+    steelyDan('t-aja-deluxe', 'Aja (Deluxe Edition)', { releaseGroupId: 'rg-aja', addedAt: at(3) }),
+    { id: 't-blue', artist: 'Weezer', title: 'Weezer', releaseGroupId: 'rg-blue', addedAt: at(1) },
+    { id: 't-green', artist: 'Weezer', title: 'Weezer', releaseGroupId: 'rg-green', addedAt: at(2) },
+    { id: 't-typed', artist: 'weezer', title: 'weezer', addedAt: at(3) },
+  ] });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(merged.records.map((r) => r.id), ['m-gaucho', 't-aja', 't-blue', 't-green', 't-aja-deluxe']);
+  for (const [i, a] of merged.records.entries()) {
+    for (const b of merged.records.slice(i + 1)) assert.equal(S.sameAlbum(a, b), false, `${a.id} and ${b.id} are the same album`);
+  }
+  const wishes = S.mergeSyncStates(syncState({ wishlist: [steelyDan('w1', 'Aja', { addedAt: at(2) })] }), syncState({ wishlist: [steelyDan('w2', 'aja', { addedAt: at(1) })] }));
+  assert.deepEqual(wishes.wishlist.map((w) => w.id), ['w2'], 'the wishlist keeps one copy too');
+});
+
+test('a merge takes a wish off the wishlist when you own the album', () => {
+  const mine = syncState({ records: [steelyDan('aja', 'Aja', { releaseGroupId: 'rg-aja' })] });
+  const theirs = syncState({ wishlist: [steelyDan('w1', 'Aja', { releaseGroupId: 'rg-aja' }), steelyDan('w2', 'Aja (Deluxe Edition)', { releaseGroupId: 'rg-aja' })] });
+  assert.deepEqual(titles(S.mergeSyncStates(mine, theirs).wishlist), ['Aja (Deluxe Edition)']);
+});
+
+test('a merge gives the same result in either order, and merging again changes nothing', () => {
+  const mine = syncState({
+    records: [steelyDan('aja', 'Aja', { notes: 'mine' }), steelyDan('gaucho', 'Gaucho', { updatedAt: at(2) }), steelyDan('m-katy', 'Katy Lied', { addedAt: at(2) })],
+    wishlist: [steelyDan('w1', 'Pretzel Logic')],
+    confirmed: { 'rg-a': at(2) },
+    deleted: { records: { royal: at(2) } },
+  });
+  const theirs = syncState({
+    records: [steelyDan('aja', 'Aja', { notes: 'theirs' }), steelyDan('royal', 'The Royal Scam', { updatedAt: at(1) }), steelyDan('t-katy', 'Katy Lied')],
+    wishlist: [steelyDan('w2', 'Gaucho')],
+    confirmed: { 'rg-b': at(1) },
+    deleted: { records: { gaucho: at(3) }, confirmed: { 'rg-a': at(3) } },
+  });
+  const merged = S.mergeSyncStates(mine, theirs);
+  assert.deepEqual(S.mergeSyncStates(theirs, mine), merged, 'either order');
+  assert.equal(JSON.stringify(S.mergeSyncStates(theirs, mine)), JSON.stringify(merged), 'written the same way');
+  assert.deepEqual(S.mergeSyncStates(merged, theirs), merged, 'merging again');
+  assert.deepEqual(S.mergeSyncStates(merged, mine), merged);
+  assert.deepEqual(S.mergeSyncStates(merged, merged), merged);
+});
+
+test('merging thousands of records stays fast', () => {
+  const big = (prefix, offset) => syncState({ records: Array.from({ length: 3000 }, (_, i) => ({
+    id: `${prefix}${i}`, artist: `Artist ${(i + offset) % 400}`, title: `Album ${i + offset}`, releaseGroupId: i % 3 ? `rg-${i + offset}` : null, addedAt: at(1),
+  })) });
+  const start = process.hrtime.bigint();
+  const merged = S.mergeSyncStates(big('m', 0), big('t', 1500));
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.equal(merged.records.length, 4500);
+  assert.ok(ms < 1000, `took ${ms.toFixed(0)} ms`);
+});
+
+test('two devices that sync end up with the same collection', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
+  const pc = S.createStore(S.memoryStorage());
+  pc.add({ artist: 'Steely Dan', title: 'Aja' });
+  pc.add({ artist: 'Steely Dan', title: 'Gaucho' });
+  const phone = S.createStore(S.memoryStorage());
+  restore(phone, pc.exportJSON());
+  phone.add({ artist: 'Can', title: 'Tago Mago' });
+  t.mock.timers.setTime(Date.parse('2026-01-02T00:00:00.000Z'));
+  pc.add({ artist: 'Can', title: 'tago mago' });
+  let copy = null;
+  const sync = (device) => {
+    if (copy) device.applySyncState(JSON.parse(JSON.stringify(copy)));
+    copy = device.syncState();
+  };
+
+  sync(phone);
+  sync(pc);
+  sync(phone);
+  assert.deepEqual(titles(phone.all()).sort(), ['Aja', 'Gaucho', 'Tago Mago']);
+  assert.deepEqual(phone.all(), pc.all());
+
+  t.mock.timers.setTime(Date.parse(at(2)));
+  phone.remove(phone.all().find((r) => r.title === 'Gaucho').id);
+  pc.update(pc.all().find((r) => r.title === 'Aja').id, { notes: 'Signed' });
+  sync(phone);
+  sync(pc);
+  sync(phone);
+  assert.deepEqual(pc.all().map((r) => [r.title, r.notes]).sort(), [['Aja', 'Signed'], ['Tago Mago', '']]);
+  assert.deepEqual(phone.all(), pc.all());
+});
+
+test('applySyncState saves the merge and tells the app only when something changed', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const gaucho = store.add({ artist: 'Steely Dan', title: 'Gaucho' });
+  let changes = 0;
+  store.onChange(() => changes++);
+  const theirs = syncState({ records: [steelyDan('katy', 'Katy Lied')], deleted: { records: { [gaucho.id]: at(2) } } });
+
+  store.applySyncState(theirs);
+  assert.deepEqual(titles(S.createStore(storage).all()), ['Katy Lied']);
+  assert.equal(changes, 1);
+  store.applySyncState(theirs);
+  assert.equal(changes, 1, 'nothing new the second time');
+});
+
+test('applySyncState leaves out what it cannot read from the other device', () => {
+  const store = S.createStore(S.memoryStorage());
+  store.applySyncState({
+    records: [null, { id: 5, artist: 'Can', title: 'Future Days' }, { id: 'no-title', artist: 'Can' }, steelyDan('aja', 'Aja')],
+    wishlist: 'not a list',
+    confirmed: { 'rg-a': 5, 'rg-b': at(1) },
+    deleted: 'not markers',
+  });
+  store.applySyncState(null);
+  assert.deepEqual(titles(store.all()), ['Aja']);
+  assert.deepEqual(store.syncState().confirmed, { 'rg-b': at(1) });
+});
+
+test('saving a cover color does not count as a change to the record', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
+  const storage = S.memoryStorage();
+  const store = S.createStore(storage);
+  const record = store.add({ artist: 'Steely Dan', title: 'Aja' });
+  t.mock.timers.setTime(Date.parse(at(2)));
+  store.setCoverColor(record.id, 'rgb(12 34 56)');
+  const saved = S.createStore(storage).get(record.id);
+  assert.equal(saved.coverColor, 'rgb(12 34 56)');
+  assert.equal(saved.updatedAt, at(1));
+});
+
+test('two tabs open at once keep both their changes', () => {
+  const shared = S.memoryStorage();
+  const first = S.createStore(shared);
+  const second = S.createStore(shared);
+  let shown = 0;
+  second.onChange(() => shown++);
+
+  first.setPref('sort', 'year');
+  second.reload();
+  assert.equal(shown, 0, 'a preference saved in the other tab changes nothing that syncs');
+
+  first.add({ artist: 'Steely Dan', title: 'Aja' });
+  second.reload();
+  assert.equal(shown, 1, 'the other tab shows the new record');
+  second.add({ artist: 'Radiohead', title: 'OK Computer' });
+  assert.deepEqual(titles(S.createStore(shared).all()), ['Aja', 'OK Computer']);
+});
+
 test('unreadable saved data is set aside instead of overwritten', () => {
   const storage = S.memoryStorage();
   storage.setItem(S.KEYS.records, '{oops');
