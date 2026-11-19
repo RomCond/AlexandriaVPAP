@@ -1,6 +1,6 @@
 /*
- * Syncs the collection between your devices: Google sign-in through Firebase, and a copy of the sync
- * state in Firestore that only your account can read or write. Nothing loads until js/sync-config.js
+ * Syncs the collection between your devices: sign-in with an email and password through Firebase,
+ * and a copy of the sync state in Firestore that only your account can read or write. Nothing loads until js/sync-config.js
  * is filled in. Loaded as a plain script in the browser (window.RC.sync), after js/store.js, and with
  * require() in Node tests.
  */
@@ -94,6 +94,8 @@
   /*
    * The sync service on Firebase, with Firebase's code loaded from Google's CDN at a pinned version.
    * Each bucket is the document users/{account id}/sync/{bucket}, holding the bucket's text as `state`.
+   * The password goes to Firebase and nowhere else. Accounts are added in the Firebase console, so
+   * nobody can create one from the site.
    */
   async function firebaseService(config) {
     const [app, auth, firestore] = await Promise.all(['app', 'auth', 'firestore'].map((name) => import(`${FIREBASE_URL}/firebase-${name}.js`)));
@@ -103,7 +105,8 @@
     const asUser = (user) => user && { id: user.uid, email: user.email };
     return {
       watchUser: (callback) => auth.onAuthStateChanged(session, (user) => callback(asUser(user))),
-      signIn: async () => asUser((await auth.signInWithPopup(session, new auth.GoogleAuthProvider())).user),
+      signIn: async (email, password) => asUser((await auth.signInWithEmailAndPassword(session, email, password)).user),
+      resetPassword: (email) => auth.sendPasswordResetEmail(session, email),
       signOut: () => auth.signOut(session),
       exchange: (change) => firestore.runTransaction(db, async (transaction) => {
         const refs = BUCKETS.map((id) => firestore.doc(db, 'users', session.currentUser.uid, 'sync', id));
@@ -114,22 +117,25 @@
     };
   }
 
-  // What went wrong, from the error code Firebase gives. Closing the sign-in window isn't a problem.
+  // What went wrong, from the error code Firebase gives. Firebase answers a wrong email and a wrong
+  // password alike, so nobody can find out which emails have an account.
   const PROBLEMS = {
     'permission-denied': 'notAllowed',
     unavailable: 'offline',
     'auth/network-request-failed': 'offline',
+    'auth/invalid-credential': 'wrongPassword',
+    'auth/wrong-password': 'wrongPassword',
+    'auth/user-not-found': 'wrongPassword',
+    'auth/invalid-email': 'wrongPassword',
+    'auth/too-many-requests': 'tooManyAttempts',
+    'auth/operation-not-allowed': 'passwordSignInOff',
     'auth/unauthorized-domain': 'domainNotAuthorized',
-    'auth/operation-not-allowed': 'googleSignInOff',
-    'auth/popup-blocked': 'popupBlocked',
-    'auth/popup-closed-by-user': null,
-    'auth/cancelled-popup-request': null,
   };
 
   function problemOf(error) {
     const code = error && error.code;
     const kind = Object.prototype.hasOwnProperty.call(PROBLEMS, code) ? PROBLEMS[code] : 'failed';
-    return kind && { kind, message: error && error.message ? String(error.message) : '' };
+    return { kind, message: error && error.message ? String(error.message) : '' };
   }
 
   /*
@@ -177,19 +183,34 @@
       }
     }
 
-    // Signing in syncs right away, so the first sign-in on a device brings the collection over.
-    async function signIn() {
-      if (!active || busy()) return;
+    // Signing in syncs right away, so the first sign-in on a device brings the collection over. The
+    // password goes to the service and isn't kept. Returns whether the sign-in worked.
+    async function signIn(email, password) {
+      if (!active || busy()) return false;
       set({ phase: 'signingIn', problem: null });
       let user;
       try {
-        user = await active.signIn();
+        user = await active.signIn(email, password);
       } catch (error) {
         set({ phase: 'signedOut', problem: problemOf(error) });
-        return;
+        return false;
       }
       set({ user, phase: 'idle' });
       await syncNow();
+      return true;
+    }
+
+    // Asks Firebase to email a link for setting a new password. Returns whether it was sent.
+    async function resetPassword(email) {
+      if (!active || busy()) return false;
+      try {
+        await active.resetPassword(email);
+      } catch (error) {
+        set({ problem: problemOf(error) });
+        return false;
+      }
+      set({ problem: null });
+      return true;
     }
 
     // Signing out keeps this device's records. It only stops syncing them.
@@ -214,6 +235,7 @@
         return () => listeners.delete(listener);
       },
       signIn,
+      resetPassword,
       signOut,
       syncNow,
     };

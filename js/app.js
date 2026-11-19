@@ -1108,11 +1108,12 @@
   const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService });
 
   const SYNC_PROBLEMS = {
-    notAllowed: (user) => `This Google account can't sync. If it's yours, put its account id${user ? `, ${user.id},` : ''} in the access rules in the Firebase console.`,
+    wrongPassword: () => "That email and password don't match. Check them, or use Forgot password.",
+    tooManyAttempts: () => 'Too many tries. Wait a few minutes, or use Forgot password to set a new one.',
+    passwordSignInOff: () => "Email and password sign-in isn't turned on in the Firebase console yet.",
+    notAllowed: (user) => `This account can't sync. If it's yours, put its account id${user ? `, ${user.id},` : ''} in the access rules in the Firebase console.`,
     offline: () => "Couldn't reach the sync service. Check your connection and try again.",
     domainNotAuthorized: () => "Firebase doesn't allow sign-in from this site's address yet. Add it to the authorized domains in the Firebase console.",
-    googleSignInOff: () => "Google sign-in isn't turned on in the Firebase console yet.",
-    popupBlocked: () => 'Your browser blocked the sign-in window. Allow pop-ups for this site and try again.',
     failed: (user, message) => `Sync didn't work. ${message}`.trim(),
   };
 
@@ -1124,34 +1125,42 @@
     return `Synced on ${new Date(time).toLocaleDateString()}.`;
   }
 
-  // The panel under the backup buttons: sign in, sync, and what went wrong if anything did.
+  // The panel under the backup buttons: sign in, sync, and what went wrong if anything did. Its parts
+  // stay in the page and only show or hide, so a password manager can fill the sign-in form and what
+  // you typed is still there after a failed sign-in.
   function renderSync() {
-    const panel = $('#sync');
     const { phase, user, problem, syncedAt } = sync.state;
-    panel.hidden = phase === 'off' || phase === 'starting';
-    if (panel.hidden) return;
     const busy = phase === 'signingIn' || phase === 'syncing';
-    const parts = [h('h2', { id: 'sync-heading' }, 'Sync between devices')];
-    if (phase === 'unavailable') {
-      parts.push(h('p', { class: 'muted small' }, "Sync couldn't start. Check your connection and reload the page."));
-    } else if (!user) {
-      parts.push(
-        h('p', { class: 'muted small' }, 'Sign in with the same Google account on each device to keep one collection on all of them.'),
-        h('button', { type: 'button', id: 'sync-sign-in', disabled: busy, onclick: () => sync.signIn() }, phase === 'signingIn' ? 'Signing in…' : 'Sign in with Google'));
-    } else {
+    $('#sync').hidden = phase === 'off' || phase === 'starting';
+    $('#sync-unavailable').hidden = phase !== 'unavailable';
+    $('#sync-sign-in').hidden = phase === 'unavailable' || Boolean(user);
+    $('#sync-signed-in').hidden = !user;
+    for (const id of ['#sync-sign-in-button', '#sync-forgot', '#sync-now', '#sync-sign-out']) $(id).disabled = busy;
+    $('#sync-sign-in-button').textContent = phase === 'signingIn' ? 'Signing in…' : 'Sign in';
+    if (user) {
       const when = phase === 'syncing' ? 'Syncing…' : syncedAt ? syncedWhen(syncedAt) : 'Not synced on this device yet.';
-      parts.push(
-        h('p', { class: 'muted small', id: 'sync-status' }, `Signed in as ${user.email || 'your Google account'}. ${when}`),
-        h('div', { class: 'sync-actions' },
-          h('button', { type: 'button', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now'),
-          h('button', { type: 'button', class: 'link', id: 'sync-sign-out', disabled: busy, onclick: () => sync.signOut() }, 'Sign out')),
-        h('details', { class: 'small sync-account' },
-          h('summary', {}, 'Account id for the access rules'),
-          h('code', { id: 'sync-account-id' }, user.id),
-          h('button', { type: 'button', class: 'link small', onclick: () => copyText(user.id, 'Copied the account id') }, 'Copy')));
+      $('#sync-status').textContent = `Signed in as ${user.email}. ${when}`;
+      $('#sync-account-id').textContent = user.id;
     }
-    if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](user, problem.message)));
-    panel.replaceChildren(...parts);
+    $('#sync-problem').hidden = !problem;
+    $('#sync-problem').textContent = problem ? SYNC_PROBLEMS[problem.kind](user, problem.message) : '';
+  }
+
+  // The password goes from the form to Firebase and nowhere else, and leaves the form once you're in.
+  async function signInToSync(event) {
+    event.preventDefault();
+    const { email, password } = event.target.elements;
+    if (await sync.signIn(email.value.trim(), password.value)) password.value = '';
+  }
+
+  async function sendPasswordReset() {
+    const email = $('#sync-email');
+    if (!email.value.trim()) {
+      email.focus();
+      toast('Type your email first, then tap Forgot password.');
+      return;
+    }
+    if (await sync.resetPassword(email.value.trim())) toast('If an account uses that email, Firebase sent it a link to set a new password.');
   }
 
   // ---------- Importing ----------
@@ -1528,6 +1537,11 @@
   });
 
   sync.onChange(renderSync);
+  $('#sync-sign-in').addEventListener('submit', signInToSync);
+  $('#sync-forgot').addEventListener('click', sendPasswordReset);
+  $('#sync-now').addEventListener('click', () => sync.syncNow());
+  $('#sync-sign-out').addEventListener('click', () => sync.signOut());
+  $('#sync-copy-id').addEventListener('click', () => copyText(sync.state.user.id, 'Copied the account id'));
   window.addEventListener('storage', () => store.reload());
   window.addEventListener('hashchange', showView);
   renderSync();

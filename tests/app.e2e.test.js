@@ -246,27 +246,35 @@ async function openApp(browser, { setup, ...options } = {}) {
   return { context, page, errors, mbCalls, coverCalls, hold, firebaseCalls };
 }
 
+const OWNER_EMAIL = 'owner@example.com';
+const OWNER_PASSWORD = 'correct horse battery staple';
+
 /*
  * A sync service that stands in for Firebase, given to the page as RC.syncService. Every device
  * installed with the same fake shares its buckets, the way two devices signed in to one account share
- * a Firestore database. Set `fail` to a Firebase error code to make reads and writes fail with it.
+ * a Firestore database. Only OWNER_EMAIL with OWNER_PASSWORD signs in. `resets` lists the emails sent
+ * a password reset link. Set `fail` to a Firebase error code to make reads and writes fail with it.
  */
 function fakeSyncService() {
-  const fake = { buckets: new Map(), fail: null, account: { id: 'test-account-id', email: 'owner@example.com' } };
+  const fake = { buckets: new Map(), fail: null, resets: [], account: { id: 'test-account-id', email: OWNER_EMAIL } };
   fake.install = async (context) => {
-    await context.exposeFunction('fakeSync', (action, writes) => {
-      if (action === 'signIn') return { user: fake.account };
+    await context.exposeFunction('fakeSync', (action, payload) => {
+      if (action === 'signIn') return payload.email === OWNER_EMAIL && payload.password === OWNER_PASSWORD ? { user: fake.account } : { error: 'auth/invalid-credential' };
+      if (action === 'resetPassword') {
+        fake.resets.push(payload.email);
+        return {};
+      }
       if (fake.fail) return { error: fake.fail };
       if (action === 'read') return { buckets: Object.fromEntries(fake.buckets) };
-      for (const [id, text] of Object.entries(writes)) fake.buckets.set(id, text);
+      for (const [id, text] of Object.entries(payload)) fake.buckets.set(id, text);
       return {};
     });
     await context.addInitScript(() => {
       let user = null;
       const watchers = [];
       const tell = () => watchers.forEach((watcher) => watcher(user));
-      const call = async (action, writes) => {
-        const reply = await window.fakeSync(action, writes);
+      const call = async (action, payload) => {
+        const reply = await window.fakeSync(action, payload);
         if (reply.error) throw Object.assign(new Error(`Fake sync: ${reply.error}`), { code: reply.error });
         return reply;
       };
@@ -276,10 +284,13 @@ function fakeSyncService() {
             watchers.push(callback);
             callback(user);
           },
-          async signIn() {
-            user = (await call('signIn')).user;
+          async signIn(email, password) {
+            user = (await call('signIn', { email, password })).user;
             tell();
             return user;
+          },
+          async resetPassword(email) {
+            await call('resetPassword', { email });
           },
           async signOut() {
             user = null;
@@ -294,6 +305,12 @@ function fakeSyncService() {
     });
   };
   return fake;
+}
+
+async function signInToSync(page, email = OWNER_EMAIL, password = OWNER_PASSWORD) {
+  await page.fill('#sync-email', email);
+  await page.fill('#sync-password', password);
+  await page.click('#sync-sign-in-button');
 }
 
 async function addByHand(page, artist, title) {
@@ -949,12 +966,12 @@ test('two devices sync their collections after signing in', { skip: !chromium &&
     await addByHand(phone.page, 'Can', 'Tago Mago');
 
     await openTab(pc.page, 'collection');
-    assert.match(await text(pc.page, '#sync'), /Sign in with the same Google account on each device/);
-    await pc.page.click('#sync-sign-in');
+    assert.match(await text(pc.page, '#sync'), /Sign in with the same account on each device/);
+    await signInToSync(pc.page);
     await pc.page.locator('#sync-status', { hasText: 'Signed in as owner@example.com. Synced just now.' }).waitFor({ timeout: 5000 });
 
     await openTab(phone.page, 'collection');
-    await phone.page.click('#sync-sign-in');
+    await signInToSync(phone.page);
     await phone.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
     await shot(phone.page, 'sync-signed-in');
 
@@ -986,9 +1003,9 @@ test('sync says what went wrong, with the account id when the account is not all
     const fake = fakeSyncService();
     const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install });
     fake.fail = 'permission-denied';
-    await page.click('#sync-sign-in');
+    await signInToSync(page);
     await page.locator('#sync-problem').waitFor({ timeout: 5000 });
-    assert.equal(await text(page, '#sync-problem'), "This Google account can't sync. If it's yours, put its account id, test-account-id, in the access rules in the Firebase console.");
+    assert.equal(await text(page, '#sync-problem'), "This account can't sync. If it's yours, put its account id, test-account-id, in the access rules in the Firebase console.");
 
     fake.fail = 'unavailable';
     await page.click('#sync-now');
@@ -997,7 +1014,50 @@ test('sync says what went wrong, with the account id when the account is not all
     fake.fail = null;
     await page.click('#sync-now');
     await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
-    assert.equal(await page.locator('#sync-problem').count(), 0);
+    assert.equal(await page.locator('#sync-problem').isHidden(), true);
+
+    assert.deepEqual(firebaseCalls, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a wrong password says so, Forgot password sends a reset link, and signing out shows the form again', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install, viewport: { width: 390, height: 844 } });
+    const email = page.locator('#sync-email');
+    const password = page.locator('#sync-password');
+    assert.deepEqual([await email.getAttribute('type'), await email.getAttribute('autocomplete')], ['email', 'username']);
+    assert.deepEqual([await password.getAttribute('type'), await password.getAttribute('autocomplete')], ['password', 'current-password']);
+
+    await signInToSync(page, OWNER_EMAIL, 'wrong password');
+    await page.locator('#sync-problem', { hasText: "That email and password don't match. Check them, or use Forgot password." }).waitFor({ timeout: 5000 });
+    assert.equal(await email.inputValue(), OWNER_EMAIL, 'the email you typed is still there');
+
+    await email.fill('');
+    await page.click('#sync-forgot');
+    await page.locator('#toast.show', { hasText: 'Type your email first, then tap Forgot password.' }).waitFor();
+    await email.fill(OWNER_EMAIL);
+    await page.click('#sync-forgot');
+    await page.locator('#toast.show', { hasText: 'If an account uses that email, Firebase sent it a link to set a new password.' }).waitFor();
+    assert.deepEqual(fake.resets, [OWNER_EMAIL]);
+    await shot(page, 'sync-sign-in');
+
+    await signInToSync(page);
+    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#sync-problem').isHidden(), true);
+    assert.equal(await page.locator('#sync-sign-in').isHidden(), true, 'the form hides once you are in');
+    assert.equal(await password.inputValue(), '', 'the password leaves the form once you are in');
+    const saved = await page.evaluate(() => JSON.stringify({ ...localStorage }));
+    assert.ok(!saved.includes(OWNER_PASSWORD), 'the password is not saved on the device');
+
+    await page.click('#sync-sign-out');
+    await page.locator('#sync-sign-in').waitFor();
+    assert.equal(await page.locator('#sync-signed-in').isHidden(), true);
 
     assert.deepEqual(firebaseCalls, []);
     assert.deepEqual(errors, []);

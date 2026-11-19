@@ -828,6 +828,16 @@ button.wished {
 
 .sync-account code { overflow-wrap: anywhere; }
 
+.sync-sign-in {
+  display: grid;
+  gap: 10px;
+  max-width: 320px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.sync-sign-in p { text-align: center; }
+
 .empty {
   padding: 32px 16px;
   text-align: center;

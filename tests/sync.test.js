@@ -4,26 +4,35 @@ const S = require('../js/store.js');
 const Sync = require('../js/sync.js');
 
 const OWNER = { id: 'account-1', email: 'owner@example.com' };
+const PASSWORD = 'correct horse battery staple';
 const PLACEHOLDERS = { apiKey: 'PASTE_API_KEY_HERE', authDomain: 'PASTE_PROJECT_ID_HERE.firebaseapp.com', projectId: 'PASTE_PROJECT_ID_HERE', appId: 'PASTE_APP_ID_HERE' };
 const titles = (store) => store.all().map((record) => record.title).sort();
 
 // One device's view of a sync service that keeps its buckets in memory. Devices given the same
-// buckets share them. `writes` lists the buckets each sync wrote.
+// buckets share them. `writes` lists the buckets each sync wrote, and `resets` the emails sent a
+// password reset link. OWNER signs in with PASSWORD.
 function memoryService(buckets = new Map()) {
   const service = {
     buckets,
     writes: [],
+    resets: [],
     user: null,
     failExchange: null,
     failSignIn: null,
+    failReset: null,
     watchUser(callback) {
       service.notify = callback;
       callback(service.user);
     },
-    async signIn() {
+    async signIn(email, password) {
       if (service.failSignIn) throw service.failSignIn;
+      if (email !== OWNER.email || password !== PASSWORD) throw firebaseError('auth/invalid-credential');
       service.user = OWNER;
       return OWNER;
+    },
+    async resetPassword(email) {
+      if (service.failReset) throw service.failReset;
+      service.resets.push(email);
     },
     async signOut() {
       service.user = null;
@@ -148,7 +157,7 @@ test('signing in syncs right away and remembers when, until you sign out', async
   sync.onChange((state) => phases.push(state.phase));
   assert.equal(sync.state.phase, 'signedOut');
 
-  await sync.signIn();
+  assert.equal(await sync.signIn(OWNER.email, PASSWORD), true);
   assert.deepEqual(phases, ['signingIn', 'idle', 'syncing', 'idle']);
   assert.deepEqual(sync.state.user, OWNER);
   assert.equal(sync.state.syncedAt, '2026-03-01T00:00:00.000Z');
@@ -165,17 +174,20 @@ test('a sync problem says what went wrong, from the Firebase error code', async 
   const service = memoryService();
   const sync = Sync.startSync(S.createStore(S.memoryStorage()), { service });
 
-  service.failSignIn = firebaseError('auth/popup-closed-by-user');
-  await sync.signIn();
-  assert.deepEqual([sync.state.phase, sync.state.problem], ['signedOut', null], 'closing the sign-in window is not a problem');
+  assert.equal(await sync.signIn(OWNER.email, 'wrong password'), false);
+  assert.deepEqual([sync.state.phase, sync.state.user, sync.state.problem.kind], ['signedOut', null, 'wrongPassword']);
+  await sync.signIn('someone@example.com', PASSWORD);
+  assert.equal(sync.state.problem.kind, 'wrongPassword', 'a wrong email reads the same as a wrong password');
 
-  service.failSignIn = firebaseError('auth/unauthorized-domain');
-  await sync.signIn();
-  assert.equal(sync.state.problem.kind, 'domainNotAuthorized');
+  for (const [code, kind] of [['auth/wrong-password', 'wrongPassword'], ['auth/user-not-found', 'wrongPassword'], ['auth/too-many-requests', 'tooManyAttempts'], ['auth/operation-not-allowed', 'passwordSignInOff'], ['auth/network-request-failed', 'offline'], ['auth/unauthorized-domain', 'domainNotAuthorized']]) {
+    service.failSignIn = firebaseError(code);
+    await sync.signIn(OWNER.email, PASSWORD);
+    assert.deepEqual([sync.state.phase, sync.state.problem.kind], ['signedOut', kind], code);
+  }
 
   service.failSignIn = null;
   service.failExchange = firebaseError('permission-denied');
-  await sync.signIn();
+  assert.equal(await sync.signIn(OWNER.email, PASSWORD), true);
   assert.deepEqual([sync.state.phase, sync.state.problem.kind], ['idle', 'notAllowed']);
 
   service.failExchange = firebaseError('unavailable');
@@ -189,4 +201,43 @@ test('a sync problem says what went wrong, from the Firebase error code', async 
   service.failExchange = null;
   await sync.syncNow();
   assert.equal(sync.state.problem, null);
+});
+
+test('a password reset asks Firebase to email a link to the address typed in', async () => {
+  const service = memoryService();
+  const sync = Sync.startSync(S.createStore(S.memoryStorage()), { service });
+  assert.equal(await sync.resetPassword(OWNER.email), true);
+  assert.deepEqual(service.resets, [OWNER.email]);
+
+  service.failReset = firebaseError('auth/too-many-requests');
+  assert.equal(await sync.resetPassword(OWNER.email), false);
+  assert.equal(sync.state.problem.kind, 'tooManyAttempts');
+
+  service.failReset = null;
+  assert.equal(await sync.resetPassword(OWNER.email), true);
+  assert.equal(sync.state.problem, null, 'a reset that works clears the last problem');
+});
+
+test('the password goes to the sync service and nowhere else', async () => {
+  const base = S.memoryStorage();
+  const written = [];
+  const storage = { ...base, setItem: (key, value) => { written.push(`${key}=${value}`); base.setItem(key, value); } };
+  const store = S.createStore(storage);
+  store.add({ artist: 'Steely Dan', title: 'Aja' });
+  const service = memoryService();
+  const given = [];
+  const signIn = service.signIn;
+  service.signIn = (email, password) => {
+    given.push(password);
+    return signIn(email, password);
+  };
+  const sync = Sync.startSync(store, { service });
+  const states = [];
+  sync.onChange((state) => states.push(JSON.stringify(state)));
+
+  await sync.signIn(OWNER.email, PASSWORD);
+  assert.deepEqual(given, [PASSWORD]);
+  assert.equal(sync.state.phase, 'idle');
+  assert.ok(written.length > 0 && service.buckets.size > 0 && states.length > 0);
+  for (const text of [...written, ...service.buckets.values(), ...states]) assert.ok(!text.includes(PASSWORD), 'the password is not kept anywhere');
 });

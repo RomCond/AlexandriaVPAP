@@ -87,7 +87,32 @@
         <button type="button" class="import-open" id="import-btn">Import</button>
         <button type="button" id="export-btn">Export backup</button>
       </div>
-      <section class="sync-panel" id="sync" aria-labelledby="sync-heading" hidden></section>
+      <section class="sync-panel" id="sync" aria-labelledby="sync-heading" hidden>
+        <h2 id="sync-heading">Sync between devices</h2>
+        <form class="sync-sign-in" id="sync-sign-in" hidden>
+          <p class="muted small">Sign in with the same account on each device to keep one collection on all of them.</p>
+          <label class="field"><span>Email</span><input type="email" name="email" id="sync-email" autocomplete="username" required></label>
+          <label class="field"><span>Password</span><input type="password" name="password" id="sync-password" autocomplete="current-password" required></label>
+          <div class="sync-actions">
+            <button type="submit" class="primary" id="sync-sign-in-button">Sign in</button>
+            <button type="button" class="link small" id="sync-forgot">Forgot password?</button>
+          </div>
+        </form>
+        <div id="sync-signed-in" hidden>
+          <p class="muted small" id="sync-status"></p>
+          <div class="sync-actions">
+            <button type="button" id="sync-now">Sync now</button>
+            <button type="button" class="link" id="sync-sign-out">Sign out</button>
+          </div>
+          <details class="small sync-account">
+            <summary>Account id for the access rules</summary>
+            <code id="sync-account-id"></code>
+            <button type="button" class="link small" id="sync-copy-id">Copy</button>
+          </details>
+        </div>
+        <p class="muted small" id="sync-unavailable" hidden>Sync couldn't start. Check your connection and reload the page.</p>
+        <p class="small danger" id="sync-problem" role="alert" hidden></p>
+      </section>
     </section>
 
     <!-- Add -->
