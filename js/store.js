@@ -126,6 +126,13 @@
     return record;
   }
 
+  // A record as you see it, for counting what a sync would change. Each device reads a cover's color
+  // for itself, and a change time alone changes nothing you see, so neither counts.
+  function shownContent(input) {
+    const { updatedAt, coverColor, ...shown } = readRecord(input);
+    return JSON.stringify(shown);
+  }
+
   // ---------- Collection helpers ----------
 
   function collectionArtists(records) {
@@ -547,25 +554,29 @@
     }
   }
 
-  // A backup is a JSON object, or a JSON array of records from an early version.
+  // A backup is a JSON object, or a JSON array of records from an early version. So is a sync file.
   const BACKUP_START = /^\s*(?:\{|\[\s*[{\]])/;
+  const SYNC_FILE = { app: 'recordcatalog', kind: 'sync', version: 1 };
 
-  function parseBackup(text) {
+  // A file this app saved: a sync file from "Send to my other device", or a backup.
+  function parseSaved(text) {
     let data;
     try {
       data = JSON.parse(text);
     } catch (e) {
       throw new Error("That isn't a valid backup.");
     }
+    if (data && data.app === SYNC_FILE.app && data.kind === SYNC_FILE.kind) return { kind: 'sync', state: data.state };
     const records = Array.isArray(data) ? data : data && data.records;
     if (!Array.isArray(records)) throw new Error("That doesn't look like a Record Catalog backup.");
     const list = (value) => (Array.isArray(value) ? value : []);
-    return { records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
+    return { kind: 'backup', records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
   }
 
   /*
    * Reads pasted text or what fileContent read from a file, whichever kind it is:
    *   { kind: 'backup', records, wishlist, vinylConfirmed }                          a Record Catalog backup, for importBackup
+   *   { kind: 'sync', state }                                                        a sync file, for previewSyncState and applySyncState
    *   { kind: 'table', app, columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
    *   { kind: 'list', items, unreadable, merged }                                    one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
@@ -578,7 +589,7 @@
       return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(content.map((cells) => cells.join('\t')).join('\n')) };
     }
     const source = String(content || '');
-    if (BACKUP_START.test(source)) return { kind: 'backup', ...parseBackup(source) };
+    if (BACKUP_START.test(source)) return parseSaved(source);
     const table = parseRecordTable(source);
     return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(source) };
   }
@@ -1154,6 +1165,26 @@
       // What syncs between devices: the records, the wishlist, the vinyl confirmations, and what you
       // deleted from each, with times. Preferences and the discography cache stay on this device.
       syncState,
+
+      // What "Send to my other device" sends: the sync state, marked so Import can tell it from a backup.
+      exportSyncFile() {
+        return JSON.stringify({ ...SYNC_FILE, sentAt: now(), state: syncState() });
+      },
+
+      // What applySyncState(theirs) would change: how many records it would add, update and remove,
+      // and how many wishlist records it would change.
+      previewSyncState(theirs) {
+        const merged = mergeSyncStates(syncState(), readSyncState(theirs));
+        const changes = (before, after) => {
+          const old = new Map(before.map((record) => [record.id, shownContent(record)]));
+          const next = new Map(after.map((record) => [record.id, shownContent(record)]));
+          const added = [...next.keys()].filter((id) => !old.has(id)).length;
+          const updated = [...next].filter(([id, shown]) => old.has(id) && old.get(id) !== shown).length;
+          return { added, updated, removed: [...old.keys()].filter((id) => !next.has(id)).length };
+        };
+        const wishChanges = changes(wishes, merged.wishlist);
+        return { ...changes(records, merged.records), wishes: wishChanges.added + wishChanges.updated + wishChanges.removed };
+      },
 
       // Merges another device's sync state into this one and saves the result. Listeners hear about it
       // only when something changed.

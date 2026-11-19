@@ -533,6 +533,62 @@ test('two devices that sync end up with the same collection', (t) => {
   assert.deepEqual(phone.all(), pc.all());
 });
 
+// What importing a sync file does: Import reads it, the dialog previews it, and Sync applies it.
+function receiveSyncFile(store, text) {
+  const read = S.readImport(text);
+  assert.equal(read.kind, 'sync');
+  const preview = store.previewSyncState(read.state);
+  store.applySyncState(read.state);
+  return preview;
+}
+
+test('a sync file carries an edit one way and a delete the other, and importing it twice changes nothing more', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
+  const pc = S.createStore(S.memoryStorage());
+  const phone = S.createStore(S.memoryStorage());
+  pc.add({ artist: 'Steely Dan', title: 'Aja' });
+  pc.add({ artist: 'Steely Dan', title: 'Gaucho' });
+  phone.addToWishlist({ artist: 'Can', title: 'Tago Mago' });
+  assert.deepEqual(receiveSyncFile(phone, pc.exportSyncFile()), { added: 2, updated: 0, removed: 0, wishes: 0 });
+
+  t.mock.timers.setTime(Date.parse(at(2)));
+  pc.update(pc.all().find((r) => r.title === 'Aja').id, { notes: 'Signed' });
+  phone.remove(phone.all().find((r) => r.title === 'Gaucho').id);
+  assert.deepEqual(receiveSyncFile(pc, phone.exportSyncFile()), { added: 0, updated: 0, removed: 1, wishes: 1 });
+  assert.deepEqual(receiveSyncFile(phone, pc.exportSyncFile()), { added: 0, updated: 1, removed: 0, wishes: 0 });
+  for (const device of [pc, phone]) {
+    assert.deepEqual(device.all().map((r) => [r.title, r.notes]), [['Aja', 'Signed']]);
+    assert.deepEqual(titles(device.wishlist()), ['Tago Mago']);
+  }
+
+  const file = pc.exportSyncFile();
+  let changes = 0;
+  phone.onChange(() => changes++);
+  assert.deepEqual(receiveSyncFile(phone, file), { added: 0, updated: 0, removed: 0, wishes: 0 });
+  assert.deepEqual(receiveSyncFile(phone, file), { added: 0, updated: 0, removed: 0, wishes: 0 });
+  assert.equal(changes, 0, 'importing the same sync file again changes nothing');
+});
+
+test('Import tells a sync file from a backup', () => {
+  const store = S.createStore(S.memoryStorage());
+  store.add({ artist: 'Steely Dan', title: 'Aja' });
+  assert.equal(S.readImport(store.exportSyncFile()).kind, 'sync');
+  assert.equal(S.readImport(store.exportJSON()).kind, 'backup');
+  assert.throws(() => S.readImport('{"kind": "sync"}'), /look like/, 'only a file this app marked is a sync file');
+});
+
+test('a sync preview counts what you would see change, not cover colors or change times', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
+  const pc = S.createStore(S.memoryStorage());
+  const aja = pc.add({ artist: 'Steely Dan', title: 'Aja', releaseGroupId: 'rg-aja' });
+  const phone = S.createStore(S.memoryStorage());
+  phone.applySyncState(pc.syncState());
+  pc.setCoverColor(aja.id, 'rgb(12 34 56)');
+  t.mock.timers.setTime(Date.parse(at(2)));
+  pc.update(aja.id, {});
+  assert.deepEqual(phone.previewSyncState(pc.syncState()), { added: 0, updated: 0, removed: 0, wishes: 0 });
+});
+
 test('applySyncState saves the merge and tells the app only when something changed', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(at(1)) });
   const storage = S.memoryStorage();
