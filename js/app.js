@@ -1088,13 +1088,34 @@
 
   // ---------- Backup ----------
 
-  function exportBackup() {
-    const blob = new Blob([store.exportJSON()], { type: 'application/json' });
-    const link = h('a', { href: URL.createObjectURL(blob), download: `record-catalog-${new Date().toISOString().slice(0, 10)}.json` });
+  function download(blob, name) {
+    const link = h('a', { href: URL.createObjectURL(blob), download: name });
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  function exportBackup() {
+    download(new Blob([store.exportJSON()], { type: 'application/json' }), `record-catalog-${today()}.json`);
+  }
+
+  // Sends a sync file for Import on your other device: through the share sheet where the browser can
+  // share files, like Chrome on Android or Safari on an iPhone, and as a download everywhere else.
+  // It's a .txt file because browsers don't share .json files.
+  async function sendSyncFile() {
+    const file = new File([store.exportSyncFile()], `record-catalog-sync-${today()}.txt`, { type: 'text/plain' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Record Catalog sync' });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return; // you closed the share sheet
+      }
+    }
+    download(file, file.name);
   }
 
   // ---------- Importing ----------
@@ -1128,12 +1149,24 @@
   const columnNames = (names) => `${andList(names)} ${names.length === 1 ? 'column' : 'columns'}`;
   const importProblem = (...children) => h('div', { class: 'import-problem' }, ...children);
 
+  const SAVED_FILE_ACTIONS = { backup: 'Import backup', sync: 'Sync' };
+
   function showImport(next, summary) {
     importing = next;
-    $('#import-format-field').hidden = Boolean(next) && next.kind === 'backup'; // a backup's records keep their own formats
+    $('#import-format-field').hidden = Boolean(next) && next.kind in SAVED_FILE_ACTIONS; // a saved file's records keep their own formats
     $('#import-summary').replaceChildren(...summary);
     $('#import-submit').disabled = !next;
-    $('#import-submit').textContent = !next ? 'Add records' : next.kind === 'backup' ? 'Import backup' : `Add ${plural(next.items.length, 'record')}`;
+    $('#import-submit').textContent = !next ? 'Add records' : SAVED_FILE_ACTIONS[next.kind] || `Add ${plural(next.items.length, 'record')}`;
+  }
+
+  // "add 2 records, update 1 record and remove 1 record", or '' when the sync changes nothing.
+  function syncChanges({ added, updated, removed, wishes }) {
+    const changes = [];
+    if (added) changes.push(`add ${plural(added, 'record')}`);
+    if (updated) changes.push(`update ${plural(updated, 'record')}`);
+    if (removed) changes.push(`remove ${plural(removed, 'record')}`);
+    if (wishes) changes.push(`change ${wishes} on your wishlist`);
+    return andList(changes);
   }
 
   // Says what the import will do, as text is typed, pasted or loaded from a file.
@@ -1147,6 +1180,14 @@
       read = S.readImport(chosenFile ? chosenFile.content : $('#import-form').elements.text.value);
     } catch (e) {
       showImport(null, [importProblem(h('p', {}, e.message))]);
+      return;
+    }
+    if (read.kind === 'sync') {
+      const changes = syncChanges(store.previewSyncState(read.state));
+      showImport(changes ? read : null, [
+        h('p', { class: 'import-count' }, changes ? `A sync file from your other device. Syncing will ${changes}.` : 'A sync file from your other device. This device already has everything in it.'),
+        h('p', { class: 'muted small' }, 'The newer copy of each record wins, and records deleted on the other device are removed here.'),
+      ]);
       return;
     }
     if (read.kind === 'backup') {
@@ -1211,8 +1252,14 @@
 
   function onImportDialogClosed() {
     if ($('#import-dialog').returnValue !== 'import' || !importing) return;
-    if (importing.kind === 'backup') importBackup(importing);
-    else importRecords(importing.items);
+    if (importing.kind === 'sync') {
+      store.applySyncState(importing.state);
+      toast('Synced with your other device');
+    } else if (importing.kind === 'backup') {
+      importBackup(importing);
+    } else {
+      importRecords(importing.items);
+    }
   }
 
   function importBackup(backup) {
@@ -1433,6 +1480,7 @@
   $('#import-cancel').addEventListener('click', () => $('#import-dialog').close('cancel'));
   $('#import-dialog').addEventListener('close', onImportDialogClosed);
   $('#export-btn').addEventListener('click', exportBackup);
+  $('#send-sync-btn').addEventListener('click', sendSyncFile);
 
   $('#edit-dialog').addEventListener('close', onEditorClosed);
   $('#edit-cancel').addEventListener('click', () => $('#edit-dialog').close('cancel'));
