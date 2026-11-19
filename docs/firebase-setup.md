@@ -77,6 +77,10 @@ Keep the filled-in rules in the console only. Don't commit them, because the rep
 
 For now, a device syncs only when you sign in and when you click **Sync now**. Signing out stops syncing and keeps the records on that device.
 
+## Turn sync off
+
+To run the app only on each device, with nothing loaded from Firebase, open `js/sync-config.js`, change `enabled: true` to `enabled: false`, then commit and push. The sync panel goes away, and every record stays on the device it's on. To turn sync back on, change it back to `true`. Your Firebase project and its copy stay as they were, so the next sync merges each device with it again.
+
 ## Fix a sync message
 
 | The panel says | What to do |

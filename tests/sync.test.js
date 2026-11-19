@@ -125,6 +125,16 @@ test('sync stays off and loads nothing until it is set up', () => {
   assert.equal(loaded, false);
 });
 
+test('enabled: false keeps sync off and loads nothing, even when every value is filled in', () => {
+  const filled = { apiKey: 'a', authDomain: 'b', projectId: 'c', appId: 'd' };
+  let loaded = false;
+  const off = Sync.startSync(S.createStore(S.memoryStorage()), { config: { ...filled, enabled: false }, service: memoryService(), loadService: () => { loaded = true; } });
+  assert.equal(off.state.phase, 'off');
+  assert.equal(loaded, false);
+  const on = Sync.startSync(S.createStore(S.memoryStorage()), { config: { ...filled, enabled: true }, loadService: () => new Promise(() => {}) });
+  assert.equal(on.state.phase, 'starting');
+});
+
 test('sync is unavailable when Firebase code does not load', async () => {
   const filled = { apiKey: 'a', authDomain: 'b', projectId: 'c', appId: 'd' };
   const sync = Sync.startSync(S.createStore(S.memoryStorage()), { config: filled, loadService: () => Promise.reject(new TypeError('Failed to fetch')) });

@@ -134,7 +134,7 @@
 
   /*
    * The sync session the page shows. state.phase is one of:
-   *   off          sync isn't set up, and the page shows nothing about it
+   *   off          sync isn't set up or is turned off, and the page shows nothing about it
    *   starting     Firebase's code is loading
    *   unavailable  Firebase's code didn't load
    *   signedOut, signingIn, idle (signed in), syncing
@@ -157,9 +157,10 @@
       active.watchUser((user) => set({ user, phase: busy() ? state.phase : user ? 'idle' : 'signedOut' }));
     }
 
-    if (service) {
+    const turnedOn = !(config && config.enabled === false);
+    if (turnedOn && service) {
       use(service);
-    } else if (isConfigured(config)) {
+    } else if (turnedOn && isConfigured(config)) {
       state = { ...state, phase: 'starting' };
       loadService(config).then(use, (error) => set({ phase: 'unavailable', problem: problemOf(error) }));
     }
