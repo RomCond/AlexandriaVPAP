@@ -247,28 +247,65 @@ async function openApp(browser, { setup, ...options } = {}) {
 }
 
 /*
- * A sync service that stands in for Firebase, given to the page as RC.syncService. Every device
- * installed with the same fake shares its buckets, the way two devices signed in to one account share
- * a Firestore database. Set `fail` to a Firebase error code to make reads and writes fail with it.
+ * A sync service that stands in for Firebase, given to the page as RC.syncService. It plays one
+ * Firebase project: each account keeps its own buckets, and access records decide who syncs, as
+ * firestore.rules does, with fake.owner as the owner. `install(account)` sets up a browser context as
+ * a device that signs in as that account. Every device installed from the same fake shares the
+ * project. Set `fail` to a Firebase error code to make every call after sign-in fail with it.
+ * `calls` lists every call any device made.
  */
+const OWNER = { id: 'test-account-id', name: 'Site Owner', email: 'owner@example.com' };
+const ANA = { id: 'ana-account-id', name: 'Ana Lima', email: 'ana@example.com' };
+const BEN = { id: 'ben-account-id', name: 'Ben Ortiz', email: 'ben@example.com' };
+
 function fakeSyncService() {
-  const fake = { buckets: new Map(), fail: null, account: { id: 'test-account-id', email: 'owner@example.com' } };
-  fake.install = async (context) => {
-    await context.exposeFunction('fakeSync', (action, writes) => {
-      if (action === 'signIn') return { user: fake.account };
-      if (fake.fail) return { error: fake.fail };
-      if (action === 'read') return { buckets: Object.fromEntries(fake.buckets) };
-      if (action === 'list') return { people: [] };
-      if (action === 'mine') return { access: null };
-      for (const [id, text] of Object.entries(writes)) fake.buckets.set(id, text);
+  const fake = { owner: OWNER, buckets: new Map(), access: new Map(), fail: null, calls: [] };
+  const bucketsOf = (id) => fake.buckets.get(id) || fake.buckets.set(id, new Map()).get(id);
+  const moves = { pending: ['approved', 'denied'], approved: ['denied'] };
+  const denied = { error: 'permission-denied' };
+
+  function answer(account, action, arg) {
+    fake.calls.push(action);
+    if (action === 'signIn') return { user: account };
+    if (fake.fail) return { error: fake.fail };
+    const isOwner = account.id === OWNER.id;
+    const mine = fake.access.get(account.id);
+    const syncs = isOwner || (mine && mine.status === 'approved');
+    if (action === 'read') return syncs ? { buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
+    if (action === 'write') {
+      if (!syncs) return denied;
+      for (const [id, text] of Object.entries(arg)) bucketsOf(account.id).set(id, text);
       return {};
-    });
+    }
+    if (action === 'list') return isOwner ? { people: [...fake.access.values()] } : denied;
+    if (action === 'mine') return { access: mine || null };
+    if (action === 'request') {
+      if (mine) return denied;
+      fake.access.set(account.id, { id: account.id, name: account.name, email: account.email, status: 'pending', requestedAt: new Date().toISOString(), decidedAt: null });
+      return {};
+    }
+    if (action === 'withdraw') {
+      if (!mine || mine.status !== 'pending') return denied;
+      fake.access.delete(account.id);
+      return {};
+    }
+    if (action === 'decide') {
+      const record = fake.access.get(arg.id);
+      if (!isOwner || !record || !(moves[record.status] || []).includes(arg.status)) return denied;
+      fake.access.set(arg.id, { ...record, status: arg.status, decidedAt: new Date().toISOString() });
+      return {};
+    }
+    throw new Error(`fake sync has no ${action}`);
+  }
+
+  fake.install = (account = OWNER) => async (context) => {
+    await context.exposeFunction('fakeSync', (action, arg) => answer(account, action, arg));
     await context.addInitScript(() => {
       let user = null;
       const watchers = [];
       const tell = () => watchers.forEach((watcher) => watcher(user));
-      const call = async (action, writes) => {
-        const reply = await window.fakeSync(action, writes);
+      const call = async (action, arg) => {
+        const reply = await window.fakeSync(action, arg);
         if (reply.error) throw Object.assign(new Error(`Fake sync: ${reply.error}`), { code: reply.error });
         return reply;
       };
@@ -293,12 +330,23 @@ function fakeSyncService() {
           },
           listAccess: async () => (await call('list')).people,
           readAccess: async () => (await call('mine')).access,
+          requestAccess: () => call('request'),
+          withdrawAccess: () => call('withdraw'),
+          decideAccess: (id, status) => call('decide', { id, status }),
         },
       };
     });
   };
   return fake;
 }
+
+// Opens the sync dialog from the header.
+async function openSync(page) {
+  await page.click('#sync-button');
+  await page.locator('#sync-dialog[open]').waitFor();
+}
+
+const syncName = (page) => page.locator('#sync-button').getAttribute('aria-label');
 
 async function addByHand(page, artist, title) {
   await openTab(page, 'add');
@@ -934,10 +982,38 @@ test('sync stays hidden and loads nothing from Firebase until it is set up', { s
   const browser = await chromium.launch();
   try {
     const { context, page, errors, firebaseCalls } = await openApp(browser);
-    assert.equal(await page.locator('#sync').isHidden(), true);
+    assert.equal(await page.locator('#sync-button').isHidden(), true);
     assert.deepEqual(firebaseCalls, []);
     assert.deepEqual(errors, []);
     await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('enabled: false hides sync and calls nothing, even when it is set up', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    for (const enabled of [false, true]) {
+      const fake = fakeSyncService();
+      // Stands in for a filled-in js/sync-config.js with enabled set as given.
+      const filledIn = (context) => context.addInitScript((on) => {
+        let config;
+        Object.defineProperty(window.RC, 'syncConfig', {
+          get: () => config,
+          set: (value) => {
+            config = { ...value, apiKey: 'key', authDomain: 'example.firebaseapp.com', projectId: 'example', appId: 'app', enabled: on };
+          },
+        });
+      }, enabled);
+      const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: async (c) => { await fake.install()(c); await filledIn(c); } });
+      assert.equal(await page.evaluate(() => RC.syncConfig.enabled), enabled);
+      assert.equal(await page.locator('#sync-button').isVisible(), enabled, `button shown when enabled is ${enabled}`);
+      if (!enabled) assert.deepEqual(fake.calls, []);
+      assert.deepEqual(firebaseCalls, []);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
   } finally {
     await browser.close();
   }
@@ -947,17 +1023,22 @@ test('two devices sync their collections after signing in', { skip: !chromium &&
   const browser = await chromium.launch();
   try {
     const fake = fakeSyncService();
-    const pc = await openApp(browser, { setup: fake.install });
-    const phone = await openApp(browser, { setup: fake.install, viewport: { width: 390, height: 844 } });
+    const pc = await openApp(browser, { setup: fake.install() });
+    const phone = await openApp(browser, { setup: fake.install(), viewport: { width: 390, height: 844 } });
     await addByHand(pc.page, 'Steely Dan', 'Aja');
     await addByHand(phone.page, 'Can', 'Tago Mago');
 
-    await openTab(pc.page, 'collection');
-    assert.match(await text(pc.page, '#sync'), /Sign in with the same Google account on each device/);
+    assert.equal(await syncName(pc.page), 'Sync: signed out');
+    await openSync(pc.page);
+    assert.match(await text(pc.page, '#sync-body'), /Sign in with Google on each device/);
     await pc.page.click('#sync-sign-in');
-    await pc.page.locator('#sync-status', { hasText: 'Signed in as owner@example.com. Synced just now.' }).waitFor({ timeout: 5000 });
+    await pc.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.match(await text(pc.page, '#sync-body'), /Signed in as owner@example.com\./);
+    assert.equal(await syncName(pc.page), 'Sync: synced just now');
+    assert.equal(await pc.page.locator('#sync-account-id').count(), 0, 'the owner has no use for the setup help');
+    assert.match(await text(pc.page, '#sync-people'), /No requests waiting\.[\s\S]*Nobody else syncs yet\./);
 
-    await openTab(phone.page, 'collection');
+    await openSync(phone.page);
     await phone.page.click('#sync-sign-in');
     await phone.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
     await shot(phone.page, 'sync-signed-in');
@@ -968,12 +1049,11 @@ test('two devices sync their collections after signing in', { skip: !chromium &&
     assert.deepEqual(await titles(pc.page), ['Aja', 'Tago Mago']);
     assert.deepEqual(await titles(phone.page), ['Aja', 'Tago Mago']);
 
-    await pc.page.click('#sync .sync-account summary');
-    assert.equal(await text(pc.page, '#sync-account-id'), 'test-account-id');
-
     await phone.page.click('#sync-sign-out');
     await phone.page.locator('#sync-sign-in').waitFor();
     assert.equal(await text(phone.page, '#nav-count'), '2', 'signing out keeps the records');
+    await phone.page.click('#sync-close');
+    assert.equal(await phone.page.locator('#sync-dialog').isVisible(), false);
 
     assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
     assert.deepEqual([...pc.errors, ...phone.errors], []);
@@ -984,28 +1064,181 @@ test('two devices sync their collections after signing in', { skip: !chromium &&
   }
 });
 
-test('sync says what went wrong, with the account id when the account is not allowed', { skip: !chromium && 'playwright is not installed' }, async () => {
+test('a guest asks for access, the owner approves, and the guest syncs only their own collection', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
     const fake = fakeSyncService();
-    const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install });
+    const owner = await openApp(browser, { setup: fake.install() });
+    const ana = await openApp(browser, { setup: fake.install(ANA), viewport: { width: 375, height: 760 } });
+    await addByHand(owner.page, 'Steely Dan', 'Aja');
+    await addByHand(ana.page, 'Can', 'Tago Mago');
+
+    await openSync(ana.page);
+    await ana.page.click('#sync-sign-in');
+    await ana.page.locator('#sync-request').waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: no access yet');
+    assert.equal(await text(ana.page, '#sync-privacy'), "Asking shares your name and email with the site's owner, and your collection is kept in their Firebase project.");
+    assert.equal(await ana.page.locator('#sync-people, #sync-now, [data-approve]').count(), 0, 'a guest sees no owner controls and no Sync now');
+    assert.equal(await ana.page.locator('.sync-account[open]').count(), 0, 'the setup help starts closed');
+    await shot(ana.page, 'sync-guest-request');
+
+    await ana.page.click('#sync-request');
+    await ana.page.locator('#sync-status', { hasText: "You're waiting for the site's owner to approve it." }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: waiting for approval');
+    assert.equal(await ana.page.locator('#sync-account-id').count(), 0);
+    assert.deepEqual(fake.buckets.get(ANA.id), undefined, 'nothing synced while pending');
+
+    await openSync(owner.page);
+    await owner.page.click('#sync-sign-in');
+    await owner.page.locator('#sync-requests [data-person]').waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-count').isVisible(), true);
+    assert.equal(await text(owner.page, '#sync-count'), '1');
+    assert.equal(await syncName(owner.page), 'Sync: synced just now, 1 request waiting');
+    assert.match(await text(owner.page, '#sync-requests'), /Ana Lima\s+ana@example.com/);
+    await shot(owner.page, 'sync-owner-requests');
+    await owner.page.click(`[data-approve="${ANA.id}"]`);
+    await owner.page.locator(`#sync-approved [data-person="${ANA.id}"]`).waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-count').isHidden(), true);
+    assert.equal(fake.access.get(ANA.id).status, 'approved');
+
+    await ana.page.click('#sync-check');
+    await ana.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: synced just now');
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(await titles(ana.page), ['Tago Mago'], "Ana doesn't get the owner's records");
+    await owner.page.click('#sync-now');
+    await owner.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.deepEqual(await titles(owner.page), ['Aja'], "the owner doesn't get Ana's records");
+
+    await owner.page.click(`[data-remove="${ANA.id}"]`);
+    assert.match(await text(owner.page, `[data-person="${ANA.id}"]`), /Remove Ana Lima\? They can't ask again\./);
+    assert.equal(fake.access.get(ANA.id).status, 'approved', 'nothing changes before the second tap');
+    await owner.page.click(`[data-confirm="${ANA.id}"]`);
+    await owner.page.locator('#sync-people', { hasText: 'Nobody else syncs yet.' }).waitFor({ timeout: 5000 });
+    assert.equal(fake.access.get(ANA.id).status, 'denied');
+
+    await ana.page.click('#sync-now');
+    await ana.page.locator('#sync-status', { hasText: "You don't have access to sync on this site." }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: no access');
+    assert.equal(await ana.page.locator('#sync-request, #sync-now').count(), 0);
+
+    assert.deepEqual([...owner.firebaseCalls, ...ana.firebaseCalls], []);
+    assert.deepEqual([...owner.errors, ...ana.errors], []);
+    await owner.context.close();
+    await ana.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the owner denies a request, and a guest can withdraw one', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const ana = await openApp(browser, { setup: fake.install(ANA) });
+    const ben = await openApp(browser, { setup: fake.install(BEN) });
+    for (const guest of [ana, ben]) {
+      await openSync(guest.page);
+      await guest.page.click('#sync-sign-in');
+      await guest.page.click('#sync-request');
+      await guest.page.locator('#sync-withdraw').waitFor({ timeout: 5000 });
+    }
+    await ben.page.click('#sync-withdraw');
+    await ben.page.locator('#sync-request').waitFor({ timeout: 5000 });
+    assert.equal(fake.access.has(BEN.id), false);
+
+    const owner = await openApp(browser, { setup: fake.install() });
+    await openSync(owner.page);
+    await owner.page.click('#sync-sign-in');
+    await owner.page.locator(`[data-deny="${ANA.id}"]`).waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-requests [data-person]').count(), 1, 'a withdrawn request is gone');
+    await owner.page.click(`[data-deny="${ANA.id}"]`);
+    await owner.page.click(`[data-person="${ANA.id}"] .link`);
+    assert.equal(fake.access.get(ANA.id).status, 'pending', 'Cancel keeps the request');
+    await owner.page.click(`[data-deny="${ANA.id}"]`);
+    await owner.page.click(`[data-confirm="${ANA.id}"]`);
+    await owner.page.locator('#sync-people', { hasText: 'No requests waiting.' }).waitFor({ timeout: 5000 });
+    assert.equal(fake.access.get(ANA.id).status, 'denied');
+
+    await ana.page.click('#sync-check');
+    await ana.page.locator('#sync-status', { hasText: "You don't have access to sync on this site." }).waitFor({ timeout: 5000 });
+    assert.deepEqual([...ana.errors, ...ben.errors, ...owner.errors], []);
+    for (const device of [ana, ben, owner]) await device.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sync says what went wrong, with the account id for setting up the rules', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install() });
     fake.fail = 'permission-denied';
+    await openSync(page);
     await page.click('#sync-sign-in');
     await page.locator('#sync-problem').waitFor({ timeout: 5000 });
-    assert.equal(await text(page, '#sync-problem'), "This Google account can't sync. If it's yours, put its account id, test-account-id, in the access rules in the Firebase console.");
+    assert.equal(await text(page, '#sync-problem'), "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.");
+    assert.equal(await syncName(page), 'Sync: something went wrong');
+    await page.click('.sync-account summary');
+    assert.equal(await text(page, '#sync-account-id'), 'test-account-id');
+
+    fake.fail = 'resource-exhausted';
+    await page.click('#sync-sign-out');
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-problem', { hasText: "This site has used up today's free Firebase reads." }).waitFor({ timeout: 5000 });
+
+    fake.fail = null;
+    await page.click('#sync-sign-out');
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#sync-problem').count(), 0);
 
     fake.fail = 'unavailable';
     await page.click('#sync-now');
     await page.locator('#sync-problem', { hasText: "Couldn't reach the sync service." }).waitFor({ timeout: 5000 });
 
-    fake.fail = null;
-    await page.click('#sync-now');
-    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
-    assert.equal(await page.locator('#sync-problem').count(), 0);
-
     assert.deepEqual(firebaseCalls, []);
     assert.deepEqual(errors, []);
     await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the sync button fits the header on a phone and on a desktop, in light and dark mode', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    fake.access.set(ANA.id, { ...ANA, status: 'pending', requestedAt: new Date().toISOString(), decidedAt: null });
+    for (const [width, height] of [[375, 760], [1100, 900]]) {
+      for (const colorScheme of ['light', 'dark']) {
+        const plain = await openApp(browser, { viewport: { width, height }, colorScheme });
+        const before = await plain.page.locator('.app-header').boundingBox();
+        await plain.context.close();
+        const { context, page, errors } = await openApp(browser, { setup: fake.install(), viewport: { width, height }, colorScheme });
+        const header = () => page.locator('.app-header').boundingBox();
+        await openSync(page);
+        await page.click('#sync-sign-in');
+        await page.locator('#sync-requests [data-person]').waitFor({ timeout: 5000 });
+        await shot(page, `sync-dialog-${width}-${colorScheme}`);
+        await page.click('#sync-close');
+        const button = await page.locator('#sync-button').boundingBox();
+        const brand = await page.locator('.brand').boundingBox();
+        const tabs = await page.locator('.tabs').boundingBox();
+        const end = await page.locator('.header-inner').evaluate((el) => el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight));
+        assert.equal((await header()).height, before.height, `the button adds no height at ${width}px`);
+        assert.ok(Math.abs(button.x + button.width - end) < 1, `the button ends at the header's right edge at ${width}px`);
+        assert.ok(Math.abs(button.y + button.height / 2 - (brand.y + brand.height / 2)) < 4, `the button lines up with the name at ${width}px`);
+        assert.ok(button.x >= (width < 640 ? brand.x + brand.width : tabs.x + tabs.width), `the button doesn't cover the name or the tabs at ${width}px`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0, `no sideways scroll at ${width}px (${colorScheme})`);
+        assert.equal(await page.locator('#sync-count').isVisible(), true);
+        assert.equal(await text(page, '#sync-count'), '1');
+        await shot(page, `sync-header-${width}-${colorScheme}`);
+        assert.deepEqual(errors, []);
+        await context.close();
+      }
+    }
   } finally {
     await browser.close();
   }
