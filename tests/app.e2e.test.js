@@ -258,6 +258,8 @@ function fakeSyncService() {
       if (action === 'signIn') return { user: fake.account };
       if (fake.fail) return { error: fake.fail };
       if (action === 'read') return { buckets: Object.fromEntries(fake.buckets) };
+      if (action === 'list') return { people: [] };
+      if (action === 'mine') return { access: null };
       for (const [id, text] of Object.entries(writes)) fake.buckets.set(id, text);
       return {};
     });
@@ -289,6 +291,8 @@ function fakeSyncService() {
             const stored = new Map(Object.entries((await call('read')).buckets));
             await call('write', Object.fromEntries(change(stored)));
           },
+          listAccess: async () => (await call('list')).people,
+          readAccess: async () => (await call('mine')).access,
         },
       };
     });

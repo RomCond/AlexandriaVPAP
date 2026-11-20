@@ -7,7 +7,7 @@
     "start": "python3 -m http.server 8080",
     "test": "node --test tests/store.test.js tests/musicbrainz.test.js tests/sync.test.js",
     "test:e2e": "node --test tests/app.e2e.test.js",
-    "test:rules": "firebase emulators:exec --config tests/firebase.json --only firestore,auth --project demo-record-catalog \"node --test tests/rules.test.js\""
+    "test:rules": "firebase emulators:exec --config tests/firebase.json --only firestore,auth --project demo-record-catalog \"node --test --test-concurrency=1 tests/rules.test.js tests/firebase-service.test.js\""
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "5.0.2",
