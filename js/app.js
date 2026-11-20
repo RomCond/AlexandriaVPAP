@@ -1104,54 +1104,184 @@
   // ---------- Sync between devices ----------
 
   // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
-  // once js/sync-config.js is filled in, and the panel stays hidden until then.
+  // once js/sync-config.js is filled in, and the header button stays hidden until then.
   const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService });
 
   const SYNC_PROBLEMS = {
-    notAllowed: (user) => `This Google account can't sync. If it's yours, put its account id${user ? `, ${user.id},` : ''} in the access rules in the Firebase console.`,
+    notAllowed: () => "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.",
+    quotaReached: () => "This site has used up today's free Firebase reads. Sync works again tomorrow.",
+    tooBig: () => 'Your collection is too big to sync. The limit is about 14,000 records.',
     offline: () => "Couldn't reach the sync service. Check your connection and try again.",
     domainNotAuthorized: () => "Firebase doesn't allow sign-in from this site's address yet. Add it to the authorized domains in the Firebase console.",
     googleSignInOff: () => "Google sign-in isn't turned on in the Firebase console yet.",
     popupBlocked: () => 'Your browser blocked the sign-in window. Allow pop-ups for this site and try again.',
-    failed: (user, message) => `Sync didn't work. ${message}`.trim(),
+    failed: (message) => `Sync didn't work. ${message}`.trim(),
+  };
+
+  const SYNC_BUSY = {
+    starting: 'starting',
+    signingIn: 'signing in',
+    checking: 'checking access',
+    syncing: 'syncing',
+    requesting: 'asking for access',
+    withdrawing: 'taking back the request',
+    deciding: 'saving',
   };
 
   function syncedWhen(time) {
+    if (!time) return 'not synced on this device yet';
     const minutes = Math.floor((Date.now() - Date.parse(time)) / 60000);
-    if (minutes < 1) return 'Synced just now.';
-    if (minutes < 60) return `Synced ${plural(minutes, 'minute')} ago.`;
-    if (minutes < 24 * 60) return `Synced ${plural(Math.floor(minutes / 60), 'hour')} ago.`;
-    return `Synced on ${new Date(time).toLocaleDateString()}.`;
+    if (minutes < 1) return 'synced just now';
+    if (minutes < 60) return `synced ${plural(minutes, 'minute')} ago`;
+    if (minutes < 24 * 60) return `synced ${plural(Math.floor(minutes / 60), 'hour')} ago`;
+    return `synced on ${new Date(time).toLocaleDateString()}`;
   }
 
-  // The panel under the backup buttons: sign in, sync, and what went wrong if anything did.
-  function renderSync() {
-    const panel = $('#sync');
-    const { phase, user, problem, syncedAt } = sync.state;
-    panel.hidden = phase === 'off' || phase === 'starting';
-    if (panel.hidden) return;
-    const busy = phase === 'signingIn' || phase === 'syncing';
-    const parts = [h('h2', { id: 'sync-heading' }, 'Sync between devices')];
-    if (phase === 'unavailable') {
+  const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}.`;
+  const waitingPeople = (people) => people.filter((person) => person.status === 'pending');
+
+  // What the header button shows without opening: the tone of its dot, the words of its name, and for
+  // the owner the number of requests waiting.
+  function syncGlance({ phase, access, people, problem, syncedAt }) {
+    if (phase === 'unavailable') return { tone: 'problem', words: "couldn't start" };
+    if (SYNC_BUSY[phase]) return { tone: 'busy', words: SYNC_BUSY[phase] };
+    if (problem) return { tone: 'problem', words: 'something went wrong' };
+    if (phase === 'signedOut') return { tone: 'off', words: 'signed out' };
+    if (access === 'none') return { tone: 'off', words: 'no access yet' };
+    if (access === 'pending') return { tone: 'waiting', words: 'waiting for approval' };
+    if (access === 'denied') return { tone: 'off', words: 'no access' };
+    const count = waitingPeople(people).length;
+    const words = syncedWhen(syncedAt);
+    return { tone: 'ok', words: count ? `${words}, ${plural(count, 'request')} waiting` : words, count };
+  }
+
+  // The id of the person whose denial or removal waits for a second tap. Neither can be undone in the
+  // app, since the rules don't let a denied person back in.
+  let confirmingSync = null;
+
+  function personRow(person) {
+    const who = h('div', { class: 'sync-person-who' }, h('strong', {}, person.name || person.email), person.name ? h('span', { class: 'muted small' }, person.email) : null);
+    const busy = sync.state.phase !== 'idle';
+    const decide = (status) => {
+      confirmingSync = null;
+      sync.decide(person.id, status);
+    };
+    const confirm = (id) => {
+      confirmingSync = id;
+      renderSync();
+    };
+    const name = person.name || person.email;
+    const removing = person.status === 'approved';
+    let actions;
+    if (confirmingSync === person.id) {
+      actions = [
+        h('span', { class: 'small' }, removing ? `Remove ${name}? They can't ask again.` : `Deny ${name}? They can't ask again.`),
+        h('button', { type: 'button', class: 'small danger', 'data-confirm': person.id, disabled: busy, onclick: () => decide('denied') }, removing ? 'Remove access' : 'Deny'),
+        h('button', { type: 'button', class: 'small link', onclick: () => confirm(null) }, 'Cancel'),
+      ];
+    } else if (person.status === 'pending') {
+      actions = [
+        h('button', { type: 'button', class: 'small primary', 'data-approve': person.id, disabled: busy, onclick: () => decide('approved') }, 'Approve'),
+        h('button', { type: 'button', class: 'small', 'data-deny': person.id, disabled: busy, onclick: () => confirm(person.id) }, 'Deny'),
+      ];
+    } else {
+      actions = [h('button', { type: 'button', class: 'small link danger', 'data-remove': person.id, disabled: busy, onclick: () => confirm(person.id) }, 'Remove access')];
+    }
+    return h('li', { class: 'sync-person', 'data-person': person.id }, who, h('div', { class: 'sync-person-actions' }, actions));
+  }
+
+  // The owner's list: requests waiting, then the people who sync now.
+  function peopleSections(people) {
+    const byTime = (a, b) => compare(a.requestedAt || '', b.requestedAt || '');
+    const waiting = waitingPeople(people).sort(byTime);
+    const approved = people.filter((person) => person.status === 'approved').sort((a, b) => compare(a.name || a.email, b.name || b.email));
+    return h('div', { id: 'sync-people' },
+      h('h3', {}, 'Requests'),
+      waiting.length ? h('ul', { class: 'sync-people', id: 'sync-requests' }, waiting.map(personRow)) : h('p', { class: 'muted small' }, 'No requests waiting.'),
+      h('h3', {}, 'People who sync'),
+      approved.length ? h('ul', { class: 'sync-people', id: 'sync-approved' }, approved.map(personRow)) : h('p', { class: 'muted small' }, 'Nobody else syncs yet.'));
+  }
+
+  // The site owner needs their own id once, for the rules. Collapsed, since nobody else needs it.
+  const setupHelp = (user) => h('details', { class: 'small sync-account' },
+    h('summary', {}, 'Setting up this site?'),
+    h('p', { class: 'muted' }, "If you run this site's Firebase project, put this account id in its access rules. Anyone else can skip this."),
+    h('code', { id: 'sync-account-id' }, user.id), ' ',
+    h('button', { type: 'button', class: 'link small', onclick: () => copyText(user.id, 'Copied the account id') }, 'Copy'));
+
+  // What the dialog shows a signed-in account, by its access.
+  const SYNC_VIEWS = {
+    unknown: ({ phase, user }) => [phase === 'checking' ? h('p', { class: 'muted small' }, 'Checking your access…') : null, setupHelp(user)],
+    none: ({ user }, busy) => [
+      h('p', {}, "This site's owner decides who can sync. Ask, and you'll sync once they approve."),
+      h('button', { type: 'button', class: 'primary', id: 'sync-request', disabled: busy, onclick: () => sync.requestAccess() }, 'Request access'),
+      h('p', { class: 'muted small', id: 'sync-privacy' }, "Asking shares your name and email with the site's owner, and your collection is kept in their Firebase project."),
+      setupHelp(user),
+    ],
+    pending: (state, busy) => [
+      h('p', { id: 'sync-status' }, "You asked for access. You're waiting for the site's owner to approve it."),
+      h('div', { class: 'sync-actions' },
+        h('button', { type: 'button', id: 'sync-check', disabled: busy, onclick: () => sync.syncNow() }, 'Check again'),
+        h('button', { type: 'button', class: 'link', id: 'sync-withdraw', disabled: busy, onclick: () => sync.withdrawAccess() }, 'Withdraw request')),
+    ],
+    denied: () => [h('p', { id: 'sync-status' }, "You don't have access to sync on this site. The records on this device stay here.")],
+    approved: (state, busy) => syncControls(state, busy),
+    owner: (state, busy) => [...syncControls(state, busy), peopleSections(state.people)],
+  };
+
+  function syncControls({ phase, syncedAt }, busy) {
+    return [
+      h('p', { id: 'sync-status' }, phase === 'syncing' ? 'Syncing…' : sentence(syncedWhen(syncedAt))),
+      h('div', { class: 'sync-actions' }, h('button', { type: 'button', class: 'primary', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now')),
+    ];
+  }
+
+  function syncBody(state) {
+    const { phase, user, access, problem } = state;
+    const busy = Boolean(SYNC_BUSY[phase]);
+    const parts = [];
+    if (phase === 'starting') {
+      parts.push(h('p', { class: 'muted small' }, 'Sync is starting…'));
+    } else if (phase === 'unavailable') {
       parts.push(h('p', { class: 'muted small' }, "Sync couldn't start. Check your connection and reload the page."));
     } else if (!user) {
       parts.push(
-        h('p', { class: 'muted small' }, 'Sign in with the same Google account on each device to keep one collection on all of them.'),
-        h('button', { type: 'button', id: 'sync-sign-in', disabled: busy, onclick: () => sync.signIn() }, phase === 'signingIn' ? 'Signing in…' : 'Sign in with Google'));
+        h('p', {}, 'Sign in with Google on each device to keep one collection on all of them.'),
+        h('button', { type: 'button', class: 'primary', id: 'sync-sign-in', disabled: busy, onclick: () => sync.signIn() }, phase === 'signingIn' ? 'Signing in…' : 'Sign in with Google'));
     } else {
-      const when = phase === 'syncing' ? 'Syncing…' : syncedAt ? syncedWhen(syncedAt) : 'Not synced on this device yet.';
-      parts.push(
-        h('p', { class: 'muted small', id: 'sync-status' }, `Signed in as ${user.email || 'your Google account'}. ${when}`),
-        h('div', { class: 'sync-actions' },
-          h('button', { type: 'button', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now'),
-          h('button', { type: 'button', class: 'link', id: 'sync-sign-out', disabled: busy, onclick: () => sync.signOut() }, 'Sign out')),
-        h('details', { class: 'small sync-account' },
-          h('summary', {}, 'Account id for the access rules'),
-          h('code', { id: 'sync-account-id' }, user.id),
-          h('button', { type: 'button', class: 'link small', onclick: () => copyText(user.id, 'Copied the account id') }, 'Copy')));
+      parts.push(h('p', { class: 'muted small sync-who' }, `Signed in as ${user.email || 'your Google account'}.`), ...SYNC_VIEWS[access || 'unknown'](state, busy));
     }
-    if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](user, problem.message)));
-    panel.replaceChildren(...parts);
+    if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](problem.message)));
+    return parts;
+  }
+
+  // The header button and, when it's open, the dialog. Focus stays on the control it was on, since
+  // every change draws the dialog's body again.
+  function renderSync() {
+    const state = sync.state;
+    const button = $('#sync-button');
+    const dialog = $('#sync-dialog');
+    button.hidden = state.phase === 'off';
+    if (button.hidden) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    const glance = syncGlance(state);
+    button.dataset.tone = glance.tone;
+    button.setAttribute('aria-label', `Sync: ${glance.words}`);
+    button.title = sentence(`Sync: ${glance.words}`);
+    $('#sync-count').hidden = !glance.count;
+    $('#sync-count').textContent = glance.count || '';
+    const focused = dialog.contains(document.activeElement) && document.activeElement.id;
+    $('#sync-body').replaceChildren(...syncBody(state));
+    $('#sync-footer').replaceChildren(state.user ? h('button', { type: 'button', class: 'link', id: 'sync-sign-out', disabled: Boolean(SYNC_BUSY[state.phase]), onclick: () => sync.signOut() }, 'Sign out') : '');
+    if (focused && document.getElementById(focused)) document.getElementById(focused).focus();
+  }
+
+  function openSync() {
+    confirmingSync = null;
+    renderSync();
+    $('#sync-dialog').showModal();
   }
 
   // ---------- Importing ----------
@@ -1527,6 +1657,7 @@
     if (!lookup.running && !lookup.error && store.all().some((record) => record.pendingLookup)) runLookups();
   });
 
+  $('#sync-button').addEventListener('click', openSync);
   sync.onChange(renderSync);
   window.addEventListener('storage', () => store.reload());
   window.addEventListener('hashchange', showView);

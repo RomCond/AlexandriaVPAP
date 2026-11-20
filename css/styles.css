@@ -218,9 +218,78 @@ a { color: var(--accent); }
   line-height: 1.6;
 }
 
+/* The sync button at the end of the header. Its dot says how sync is doing, and for the site's owner
+   a count says how many requests are waiting. It keeps a 44px tap target, and the negative margins
+   keep it from making the row with the name taller on a phone. */
+.sync-button {
+  position: relative;
+  flex: none;
+  width: 44px;
+  margin: -7px 0;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.sync-button:hover { color: var(--ink); background: var(--surface-2); }
+
+.sync-button svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.sync-dot {
+  position: absolute;
+  right: 7px;
+  bottom: 9px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.sync-button[data-tone="off"] .sync-dot { display: none; }
+.sync-button[data-tone="ok"] { color: var(--ink); }
+.sync-button[data-tone="ok"] .sync-dot { background: var(--ok); }
+.sync-button[data-tone="busy"] .sync-dot { background: var(--accent); animation: sync-pulse 0.9s ease-in-out infinite alternate; }
+.sync-button[data-tone="waiting"] .sync-dot { background: var(--bg); box-shadow: inset 0 0 0 2px var(--accent); }
+.sync-button[data-tone="problem"] { color: var(--danger); }
+.sync-button[data-tone="problem"] .sync-dot { background: var(--danger); }
+
+@keyframes sync-pulse { to { opacity: 0.25; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-button[data-tone="busy"] .sync-dot { animation: none; }
+}
+
+.sync-count {
+  position: absolute;
+  top: 3px;
+  right: 1px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* On a phone the tabs take their own row, so the sync button moves up beside the name. */
 @media (max-width: 640px) {
-  .tabs { width: 100%; margin-left: 0; }
+  .tabs { order: 2; width: 100%; margin-left: 0; }
   .tabs a { padding: 7px 6px; font-size: 0.82rem; }
+  .sync-button { order: 1; margin-left: auto; }
 }
 
 @media (max-width: 359px) {
@@ -806,27 +875,57 @@ button.wished {
   margin-top: 24px;
 }
 
-.sync-panel {
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-  text-align: center;
-}
-
-.sync-panel h2 {
-  margin: 0 0 4px;
-  font-size: 1rem;
-}
+.sync-body > p { margin: 12px 0 0; }
+.sync-body > p.sync-who { margin-top: 4px; }
+.sync-body > button { margin-top: 12px; }
 
 .sync-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
   gap: 8px;
-  margin: 8px 0;
+  margin-top: 12px;
 }
 
+.sync-account { margin-top: 16px; }
+.sync-account summary { color: var(--muted); cursor: pointer; }
 .sync-account code { overflow-wrap: anywhere; }
+
+.sync-body h3 {
+  margin: 20px 0 4px;
+  font-size: 0.95rem;
+}
+
+.sync-people {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sync-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.sync-person-who {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.sync-person-who > * {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.sync-person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 
 .empty {
   padding: 32px 16px;

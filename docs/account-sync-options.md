@@ -122,7 +122,7 @@ The cost is that Google holds a readable copy of your collection. If privacy mat
 Iteration 2 is the same under every option, and it is built. The later iterations assume Firebase.
 
 1. **Iteration 2. Merge in `store.js`, with no network.** Built. See [what iteration 2 built](#what-iteration-2-built).
-2. **Iteration 3. Firebase sign-in and sync.** Built. `js/sync.js` syncs through Firebase, `js/sync-config.js` holds placeholders that you fill in, and `firestore.rules` allows only your account. **Sync between devices** on the Collection page signs in with Google, syncs at once, and offers **Sync now** and **Sign out**. [Set up sync with Firebase](firebase-setup.md) walks through the console.
+2. **Iteration 3. Firebase sign-in and sync.** Built. `js/sync.js` syncs through Firebase, `js/sync-config.js` holds placeholders that you fill in, and `firestore.rules` allows only your account. **Sync between devices** on the Collection page signs in with Google, syncs at once, and offers **Sync now** and **Sign out**. [Set up sync with Firebase](firebase-setup.md) walks through the console. Later, access requests let other people sync their own collections once the owner approves them, and the sync controls moved to a cloud button at the top right.
 3. **Iteration 4. Sync without tapping.** Sync when the app opens, when it comes back into view, and a few seconds after each change. Remove deletion markers that every device has seen. You check it on your own phone and PC with your own account.
 
 ## Where the facts come from
