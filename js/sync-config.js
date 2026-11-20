@@ -7,8 +7,8 @@
  * firestore.rules, published in the Firebase console, are what keep your collection private.
  */
 (self.RC = self.RC || {}).syncConfig = {
-  apiKey: 'PASTE_API_KEY_HERE',
-  authDomain: 'PASTE_PROJECT_ID_HERE.firebaseapp.com',
-  projectId: 'PASTE_PROJECT_ID_HERE',
-  appId: 'PASTE_APP_ID_HERE',
+  apiKey: 'AIzaSyDQLLkBfpRRbvI1FlTlOgL5klQFyZq8m2w',
+  authDomain: 'alexandriavpap.firebaseapp.com',
+  projectId: 'alexandriavpap',
+  appId: '1:1075167182977:web:dfc7605ddc67b6c1714d80',
 };
