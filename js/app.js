@@ -1252,7 +1252,8 @@
       parts.push(h('p', { class: 'muted small sync-who' }, `Signed in as ${user.email || 'your Google account'}.`), ...SYNC_VIEWS[access || 'unknown'](state, busy));
     }
     if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](problem.message)));
-    return parts;
+    // replaceChildren writes a null out as text, so leave out the views' empty slots the way h() does.
+    return parts.filter((part) => part != null);
   }
 
   // The header button and, when it's open, the dialog. Focus stays on the control it was on, since
