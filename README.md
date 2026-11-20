@@ -27,7 +27,11 @@ Any static host, such as GitHub Pages or Netlify, works too.
 
 The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist. To load it somewhere else, tap **Import** and choose the file. Importing a backup merges it with what's there and skips albums you already have.
 
-To keep the same collection on your phone and your computer, set up sync with Firebase. [Set up sync with Firebase](docs/firebase-setup.md) walks through it. You then sign in with Google under **Sync between devices** at the bottom of the Collection page, and each device syncs when you sign in and when you tap **Sync now**. Until `js/sync-config.js` is filled in, the app hides sync and loads nothing from Firebase. Setting `enabled: false` in that file turns sync off, so the app runs only on each device.
+To keep the same collection on your phone and your computer, set up sync with Firebase. [Set up sync with Firebase](docs/firebase-setup.md) walks through it. You then tap the cloud button at the top right and sign in with Google, and each device syncs when you sign in and when you tap **Sync now**. The button shows how sync is doing without opening it.
+
+Friends and family can sync their own collections through your Firebase project too. They sign in and tap **Request access**, and you approve or deny each request from the same window. You can remove someone's access later. Each person syncs a separate collection, and nobody can read anyone else's. The access rules you publish in the Firebase console enforce this, and they're the only place your account id goes.
+
+Until `js/sync-config.js` is filled in, the app hides sync and loads nothing from Firebase. Setting `enabled: false` in that file turns sync off, so the app runs only on each device.
 
 MusicBrainz allows about one request per second. The search box waits for a short pause in typing and cancels searches you've typed past. The app saves each discography you open and shows the saved copy at once next time. Once it's a week old, the app also loads a new copy behind it and swaps it in when it's complete. After four weeks it loads from scratch. **Refresh** on an artist loads a new copy the same way. When MusicBrainz is busy or the connection drops, the app tries the request again after 2, 4, 8 and 16 seconds, then shows an error. On a device that's offline, the app shows the error after the first wait of 2 seconds.
 
@@ -87,15 +91,18 @@ js/sync-config.js     your Firebase project's web config
 js/app.js             the UI
 firestore.rules       the access rules to publish in the Firebase console
 docs/                 setup guide and design notes
-tests/                unit tests and browser tests
+tests/                unit tests, browser tests, and tests of the access rules
 ```
 
 ## Tests
 
 ```sh
-npm test            # unit tests, no install needed (Node 18+)
-npm run test:e2e    # browser tests with Playwright
+npm test             # unit tests, no install needed (Node 18+)
+npm run test:e2e     # browser tests with Playwright
+npm run test:rules   # the access rules, in Firebase's emulator
 ```
+
+The rules tests need Java and `npm install`. They start Firebase's Auth and Firestore emulators on your computer, which download on the first run, and never reach a real Firebase project. They check `firestore.rules` as it is in the repository, with a test account standing in for your id, and run the app's own Firebase calls through a request, an approval and a removal.
 
 The browser tests need Playwright (`npm install`, then `npx playwright install chromium`). They answer MusicBrainz calls with fixed sample data, so they run offline and give the same result every time. Set `SCREENSHOT_DIR=some/folder` to save screenshots of each view.
 
