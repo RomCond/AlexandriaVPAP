@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
 
 let chromium;
@@ -976,7 +977,12 @@ test('two tabs open at once keep both their changes', { skip: !chromium && 'play
   }
 });
 
-const syncConfigFilledIn = !fs.readFileSync(path.join(__dirname, '..', 'js', 'sync-config.js'), 'utf8').includes('PASTE_');
+// The app's own test for a filled-in config, so a PASTE_ mentioned in a comment doesn't count.
+const syncConfigFilledIn = (() => {
+  const sandbox = { self: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'sync-config.js'), 'utf8'), sandbox);
+  return require('../js/sync.js').isConfigured(sandbox.self.RC.syncConfig);
+})();
 
 test('sync stays hidden and loads nothing from Firebase until it is set up', { skip: (!chromium && 'playwright is not installed') || (syncConfigFilledIn && 'js/sync-config.js is filled in') }, async () => {
   const browser = await chromium.launch();
