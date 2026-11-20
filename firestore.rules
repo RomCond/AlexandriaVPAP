@@ -1,26 +1,64 @@
 rules_version = '2';
 
-// Access rules for syncing Record Catalog between your devices. Only one Google account can read or
-// write, and only its own sync documents.
+// Access rules for syncing Record Catalog. The site's owner, and each person the owner approves,
+// syncs their own collection. Nobody can read anyone else's.
 //
-// Before you publish these rules, replace PASTE_YOUR_ACCOUNT_ID_HERE with the account id the app shows
-// under "Account id for the access rules" after you sign in. Then paste the rules into the Rules tab
-// of Firestore Database in the Firebase console and click Publish. docs/firebase-setup.md has the steps.
-// Keep the filled-in copy out of this repository, which is public.
+// Before you publish these rules, put your own account id in isOwner() below, in place of the
+// placeholder. The app shows your id under "Setting up this site?" after you sign in. Then paste the
+// rules into the Rules tab of Firestore Database in the Firebase console and click Publish.
+// docs/firebase-setup.md has the steps. Keep the filled-in copy out of this repository, which is public.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/sync/{bucket} {
-      function isOwner() {
-        return request.auth != null
-          && request.auth.uid == userId
-          && userId == 'PASTE_YOUR_ACCOUNT_ID_HERE';
+    function signedInAs(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isOwner() {
+      return request.auth != null && request.auth.uid == 'PASTE_YOUR_ACCOUNT_ID_HERE';
+    }
+
+    // Whether the owner lets an account sync. Its status starts at pending, then the owner sets it to
+    // approved or denied. Approved can later become denied, when the owner removes someone.
+    match /access/{uid} {
+      allow get: if signedInAs(uid) || isOwner();
+      allow list: if isOwner();
+
+      // A request carries the name and email Google gives the account, so the owner knows who asked.
+      allow create: if signedInAs(uid)
+        && request.resource.data.keys().hasAll(['status', 'name', 'email', 'requestedAt'])
+        && request.resource.data.keys().hasOnly(['status', 'name', 'email', 'requestedAt'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 200
+        && request.resource.data.name == request.auth.token.get('name', '')
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 320
+        && request.resource.data.email == request.auth.token.get('email', '')
+        && request.resource.data.requestedAt == request.time;
+
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt'])
+        && request.resource.data.decidedAt == request.time
+        && ((resource.data.status == 'pending' && request.resource.data.status in ['approved', 'denied'])
+          || (resource.data.status == 'approved' && request.resource.data.status == 'denied'));
+
+      // Someone who asked can take the request back, with their name and email, until the owner decides.
+      allow delete: if signedInAs(uid) && resource.data.status == 'pending';
+    }
+
+    // The owner's check costs no read. Everyone else's costs one read of their access document.
+    match /users/{uid}/sync/{bucket} {
+      function maySync() {
+        return signedInAs(uid)
+          && (isOwner() || get(/databases/$(database)/documents/access/$(uid)).data.status == 'approved');
       }
 
-      allow read: if isOwner();
-      allow create, update: if isOwner()
+      allow read: if maySync();
+      allow create, update: if maySync()
         && bucket.matches('[0-9a-f]')
         && request.resource.data.keys().hasOnly(['state'])
-        && request.resource.data.state is string;
+        && request.resource.data.state is string
+        && request.resource.data.state.size() <= 400000;
     }
   }
 }
