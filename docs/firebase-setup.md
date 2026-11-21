@@ -51,7 +51,7 @@ Firebase puts `localhost` on the list by default, so sync also works from `npm s
 
 1. Click the gear next to **Project Overview**, then **Project settings**.
 2. Under **Your apps**, click the web icon, `</>`.
-3. Give the app a nickname, such as `Record Catalog`. Leave **Firebase Hosting** off, and click **Register app**.
+3. Give the app a nickname, such as `Alexandria`. Leave **Firebase Hosting** off, and click **Register app**.
 4. The console shows `const firebaseConfig = { ... }`. Open `js/sync-config.js` in this repository.
 5. Replace each `PASTE_` value with the value of the same name from the console: `apiKey`, `authDomain`, `projectId` and `appId`. Keep the quotes.
 6. Commit the change and push it. GitHub Pages publishes it within a few minutes.
@@ -60,7 +60,7 @@ The web config is public by design. Anyone who opens your site can read these va
 
 ## 6. Sign in and copy your account id
 
-1. Open your site. A cloud button now shows at the top right, next to the tabs. On a phone it's next to the name, Record Catalog.
+1. Open your site. A cloud button now shows at the top right, next to the tabs. On a phone it's next to the name, Alexandria.
 2. Tap the cloud button, then **Sign in with Google**, and choose your account.
 3. The window says "Firebase didn't allow that." Until you publish the rules in step 7, that message is expected.
 4. Open **Setting up this site?** and click **Copy**. That's your account id.

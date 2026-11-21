@@ -558,14 +558,14 @@
       throw new Error("That isn't a valid backup.");
     }
     const records = Array.isArray(data) ? data : data && data.records;
-    if (!Array.isArray(records)) throw new Error("That doesn't look like a Record Catalog backup.");
+    if (!Array.isArray(records)) throw new Error("That doesn't look like an Alexandria backup.");
     const list = (value) => (Array.isArray(value) ? value : []);
     return { records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
   }
 
   /*
    * Reads pasted text or what fileContent read from a file, whichever kind it is:
-   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          a Record Catalog backup, for importBackup
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          an Alexandria backup, for importBackup
    *   { kind: 'table', app, columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
    *   { kind: 'list', items, unreadable, merged }                                    one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.

@@ -813,7 +813,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(await page.locator('.import-open:visible').count(), 1, 'the empty shelf shows one Import button');
     await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
-    await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    await page.locator('#import-summary', { hasText: 'An Alexandria backup with 7 records and 1 on your wishlist.' }).waitFor();
     assert.equal(await text(page, '#import-file-name'), path.basename(backupPath), 'the backup shows by name, not as JSON');
     assert.ok(await page.locator('#import-form [name=text]').isHidden());
     assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');

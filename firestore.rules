@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Access rules for syncing Record Catalog. The site's owner, and each person the owner approves,
+// Access rules for syncing Alexandria. The site's owner, and each person the owner approves,
 // syncs their own collection. Nobody can read anyone else's.
 //
 // Before you publish these rules, put your own account id in isOwner() below, in place of the

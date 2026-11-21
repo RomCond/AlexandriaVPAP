@@ -1,5 +1,5 @@
 /*
- * Record Catalog UI. Plain DOM, no framework, no build step.
+ * Alexandria UI. Plain DOM, no framework, no build step.
  * Records live in localStorage through RC.store. Lookups go to MusicBrainz through RC.mb.
  */
 (function () {
@@ -1132,7 +1132,7 @@
 
   function exportBackup() {
     const blob = new Blob([store.exportJSON()], { type: 'application/json' });
-    const link = h('a', { href: URL.createObjectURL(blob), download: `record-catalog-${new Date().toISOString().slice(0, 10)}.json` });
+    const link = h('a', { href: URL.createObjectURL(blob), download: `alexandria-${new Date().toISOString().slice(0, 10)}.json` });
     document.body.append(link);
     link.click();
     link.remove();
@@ -1386,7 +1386,7 @@
     if (read.kind === 'backup') {
       const wishes = read.wishlist.length ? ` and ${read.wishlist.length} on your wishlist` : '';
       showImport(read.records.length || read.wishlist.length ? read : null, [
-        h('p', { class: 'import-count' }, `A Record Catalog backup with ${plural(read.records.length, 'record')}${wishes}.`),
+        h('p', { class: 'import-count' }, `An Alexandria backup with ${plural(read.records.length, 'record')}${wishes}.`),
         h('p', { class: 'muted small' }, 'Albums you already have are skipped.'),
       ]);
       return;
