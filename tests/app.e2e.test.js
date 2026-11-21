@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
 
 let chromium;
@@ -33,42 +34,47 @@ const DISCOGRAPHIES = {
     rg('rg-amnesiac', 'Amnesiac', '2001-06-04'),
     rg('rg-creep', 'Creep', '1992-09-21', 'Single'),
     rg('rg-wrong', 'I Might Be Wrong: Live Recordings', '2001-11-12', 'Album', ['Live']),
+    rg('rg-glasto', 'Live at Glastonbury 1997', '1997-06-28', 'Album', ['Live']),
   ],
   'a-portishead': [
     rg('rg-dummy', 'Dummy', '1994-08-22'),
     rg('rg-portishead', 'Portishead', '1997-09-29'),
     rg('rg-third', 'Third', '2008-04-28'),
   ],
+  'a-takanaka': [
+    rg('rg-seychelles', 'Seychelles', '1976-07-25'),
+    rg('rg-goblins', '虹伝説 THE RAINBOW GOBLINS', '1981-04-25'),
+  ],
 };
 
-// Answers to the "vinyl releases by this artist" search. Pablo Honey only has a bootleg
-// and a CD that slipped into the results, and the live album only a flexi-disc,
-// so neither should count as having a vinyl pressing.
-const vinylRelease = (group, format, status = 'Official') => ({ status, 'release-group': { id: group }, media: [{ format }] });
-const VINYL_RELEASES = {
-  'a-radiohead': [
-    vinylRelease('rg-pablo', '12" Vinyl', 'Bootleg'),
-    vinylRelease('rg-pablo', 'CD'),
-    vinylRelease('rg-bends', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-okc', '12" Vinyl'),
-    vinylRelease('rg-kida', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '10" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl'),
-    vinylRelease('rg-amnesiac', '12" Vinyl', 'Promotion'),
-    vinylRelease('rg-creep', '7" Vinyl'),
-    vinylRelease('rg-wrong', 'Flexi-disc'),
-  ],
-  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => vinylRelease(id, '12" Vinyl')),
+// The artists' releases, as browsing them with inc=media+release-groups returns them. Pablo Honey
+// only has a bootleg LP and a CD, and the live album only a flexi-disc, so neither counts as having
+// a vinyl pressing. The Bends has a deluxe edition on vinyl; Kid A's is CD only, so it only shows
+// with Vinyl only turned off. The Glastonbury recording only exists as a bootleg, so it isn't
+// among these at all, and only loads once Vinyl only is turned off.
+const pressing = (artistId, id, groupId, format, extra = {}) => {
+  const group = DISCOGRAPHIES[artistId].find((g) => g.id === groupId);
+  const formats = Array.isArray(format) ? format : [format];
+  return { id, status: 'Official', title: group.title, date: group['first-release-date'], 'release-group': group, media: formats.map((f) => ({ format: f })), ...extra };
 };
-
-// Answers to the "deluxe or expanded releases by this artist" search. The Bends has a deluxe
-// edition on vinyl; Kid A's is CD only, so it only shows with Vinyl only turned off.
-const DELUXE_RELEASES = {
+const RELEASES = {
   'a-radiohead': [
-    { id: 'rel-bends-dlx', title: 'The Bends', disambiguation: 'collector’s deluxe edition', date: '2009-03-24', status: 'Official', 'release-group': { id: 'rg-bends' }, media: [{ format: '12" Vinyl' }, { format: '12" Vinyl' }] },
-    { id: 'rel-kida-dlx', title: 'Kid A (Expanded Edition)', date: '2016-05-06', status: 'Official', 'release-group': { id: 'rg-kida' }, media: [{ format: 'CD' }] },
+    pressing('a-radiohead', 'rel-pablo-boot', 'rg-pablo', '12" Vinyl', { status: 'Bootleg' }),
+    pressing('a-radiohead', 'rel-pablo-cd', 'rg-pablo', 'CD'),
+    pressing('a-radiohead', 'rel-bends', 'rg-bends', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-bends-dlx', 'rg-bends', ['12" Vinyl', '12" Vinyl'], { disambiguation: 'collector’s deluxe edition', date: '2009-03-24' }),
+    pressing('a-radiohead', 'rel-okc', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-okc-2', 'rg-okc', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-kida', 'rg-kida', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-kida-dlx', 'rg-kida', 'CD', { title: 'Kid A (Expanded Edition)', date: '2016-05-06' }),
+    pressing('a-radiohead', 'rel-amnesiac-10', 'rg-amnesiac', '10" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac', 'rg-amnesiac', '12" Vinyl'),
+    pressing('a-radiohead', 'rel-amnesiac-promo', 'rg-amnesiac', '12" Vinyl', { status: 'Promotion' }),
+    pressing('a-radiohead', 'rel-creep', 'rg-creep', '7" Vinyl'),
+    pressing('a-radiohead', 'rel-wrong', 'rg-wrong', 'Flexi-disc'),
+    pressing('a-radiohead', 'rel-glasto', 'rg-glasto', '12" Vinyl', { status: 'Bootleg' }),
   ],
+  'a-portishead': ['rg-dummy', 'rg-portishead', 'rg-third'].map((id) => pressing('a-portishead', `rel-${id}`, id, '12" Vinyl')),
 };
 
 // Answers to the album lookups for an imported list, by the title searched for. "Weezer" is two
@@ -93,10 +99,24 @@ function fakeMusicBrainz(url) {
     const title = /releasegroup:"([^"]+)"/.exec(query)[1];
     return { 'release-groups': ALBUM_LOOKUPS[title] || [] };
   }
-  if (url.pathname === '/ws/2/release' && query.startsWith('arid:')) {
-    const artistId = /arid:"([^"]+)"/.exec(query)[1];
-    const releases = (query.includes('format:') ? VINYL_RELEASES : DELUXE_RELEASES)[artistId] || [];
-    return { count: releases.length, offset: 0, releases };
+  if (url.pathname === '/ws/2/release-group' && query.includes('NOT secondarytype:')) {
+    const albums = (DISCOGRAPHIES[/arid:"([^"]+)"/.exec(query)[1]] || []).filter((g) => g['primary-type'] === 'Album' && !g['secondary-types'].length);
+    return { count: albums.length, 'release-groups': albums };
+  }
+  if (url.pathname === '/ws/2/release' && params.get('artist')) {
+    const statuses = (params.get('status') || '').split('|');
+    const releases = (RELEASES[params.get('artist')] || []).filter((r) => !params.get('status') || statuses.includes(r.status.toLowerCase()));
+    return { 'release-count': releases.length, 'release-offset': 0, releases };
+  }
+  if (url.pathname === '/ws/2/release' && query.includes('takanaka')) {
+    // MusicBrainz files him as 高中正義, and the sleeve credits Masayoshi Takanaka.
+    const group = { id: 'rg-goblins', title: '虹伝説 THE RAINBOW GOBLINS', 'primary-type': 'Album', 'secondary-types': [] };
+    return {
+      releases: [{
+        id: 'rel-goblins', status: 'Official', score: 100, title: group.title, date: '1981-04-25', 'release-group': group,
+        'artist-credit': [{ name: 'Masayoshi Takanaka', artist: { id: 'a-takanaka', name: '高中正義' } }], media: [{ format: '12" Vinyl' }],
+      }],
+    };
   }
   if (url.pathname === '/ws/2/release' && !query.startsWith('barcode:')) {
     // Typed search: vinyl pressings, grouped into albums by the app. Two pressings of OK Computer
@@ -181,13 +201,21 @@ function fakeCover(id) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="hsl(${hue} 45% 45%)"/><text x="8" y="90" font-family="Georgia" font-size="12" fill="#fff">${id}</text></svg>`;
 }
 
-async function openApp(browser, options = {}, beforeLoad = async () => {}) {
+// `setup` runs on the browser context before the page opens, as fakeSyncService's install does.
+async function openApp(browser, { setup, ...options } = {}) {
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, ...options });
-  await beforeLoad(context);
+  // Nothing here reaches Firebase. A request to it is recorded and stopped.
+  const firebaseCalls = [];
+  await context.route(/^https:\/\/(www\.gstatic\.com\/firebasejs\/|[^/]+\.firebaseapp\.com\/|(firestore|identitytoolkit|securetoken)\.googleapis\.com\/)/, (route) => {
+    firebaseCalls.push(route.request().url());
+    route.abort();
+  });
   const mbCalls = [];
-  await context.route('https://musicbrainz.org/**', (route) => {
+  const hold = { browse: null };
+  await context.route('https://musicbrainz.org/**', async (route) => {
     const url = new URL(route.request().url());
     mbCalls.push(url);
+    if (hold.browse && url.pathname === '/ws/2/release' && url.searchParams.get('artist')) await hold.browse;
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -208,6 +236,7 @@ async function openApp(browser, options = {}, beforeLoad = async () => {}) {
   });
   // Fonts come from Google Fonts in real use; an empty stylesheet keeps the test offline.
   await context.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  if (setup) await setup(context);
   const cdnCalls = [];
   await context.route(/^https:\/\/(cdn|fastly)\.jsdelivr\.net\//, (route) => {
     cdnCalls.push(route.request().url());
@@ -220,7 +249,118 @@ async function openApp(browser, options = {}, beforeLoad = async () => {}) {
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) errors.push(msg.text());
   });
   await page.goto(PAGE_URL);
-  return { context, page, errors, mbCalls, coverCalls, cdnCalls };
+  return { context, page, errors, mbCalls, coverCalls, hold, firebaseCalls, cdnCalls };
+}
+
+/*
+ * A sync service that stands in for Firebase, given to the page as RC.syncService. It plays one
+ * Firebase project: each account keeps its own buckets, and access records decide who syncs, as
+ * firestore.rules does, with fake.owner as the owner. `install(account)` sets up a browser context as
+ * a device that signs in as that account. Every device installed from the same fake shares the
+ * project. Set `fail` to a Firebase error code to make every call after sign-in fail with it.
+ * `calls` lists every call any device made.
+ */
+const OWNER = { id: 'test-account-id', name: 'Site Owner', email: 'owner@example.com' };
+const ANA = { id: 'ana-account-id', name: 'Ana Lima', email: 'ana@example.com' };
+const BEN = { id: 'ben-account-id', name: 'Ben Ortiz', email: 'ben@example.com' };
+
+function fakeSyncService() {
+  const fake = { owner: OWNER, buckets: new Map(), access: new Map(), fail: null, calls: [] };
+  const bucketsOf = (id) => fake.buckets.get(id) || fake.buckets.set(id, new Map()).get(id);
+  const moves = { pending: ['approved', 'denied'], approved: ['denied'] };
+  const denied = { error: 'permission-denied' };
+
+  function answer(account, action, arg) {
+    fake.calls.push(action);
+    if (action === 'signIn') return { user: account };
+    if (fake.fail) return { error: fake.fail };
+    const isOwner = account.id === OWNER.id;
+    const mine = fake.access.get(account.id);
+    const syncs = isOwner || (mine && mine.status === 'approved');
+    if (action === 'read') return syncs ? { buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
+    if (action === 'write') {
+      if (!syncs) return denied;
+      for (const [id, text] of Object.entries(arg)) bucketsOf(account.id).set(id, text);
+      return {};
+    }
+    if (action === 'list') return isOwner ? { people: [...fake.access.values()] } : denied;
+    if (action === 'mine') return { access: mine || null };
+    if (action === 'request') {
+      if (mine) return denied;
+      fake.access.set(account.id, { id: account.id, name: account.name, email: account.email, status: 'pending', requestedAt: new Date().toISOString(), decidedAt: null });
+      return {};
+    }
+    if (action === 'withdraw') {
+      if (!mine || mine.status !== 'pending') return denied;
+      fake.access.delete(account.id);
+      return {};
+    }
+    if (action === 'decide') {
+      const record = fake.access.get(arg.id);
+      if (!isOwner || !record || !(moves[record.status] || []).includes(arg.status)) return denied;
+      fake.access.set(arg.id, { ...record, status: arg.status, decidedAt: new Date().toISOString() });
+      return {};
+    }
+    throw new Error(`fake sync has no ${action}`);
+  }
+
+  fake.install = (account = OWNER) => async (context) => {
+    await context.exposeFunction('fakeSync', (action, arg) => answer(account, action, arg));
+    await context.addInitScript(() => {
+      let user = null;
+      const watchers = [];
+      const tell = () => watchers.forEach((watcher) => watcher(user));
+      const call = async (action, arg) => {
+        const reply = await window.fakeSync(action, arg);
+        if (reply.error) throw Object.assign(new Error(`Fake sync: ${reply.error}`), { code: reply.error });
+        return reply;
+      };
+      window.RC = {
+        syncService: {
+          watchUser(callback) {
+            watchers.push(callback);
+            callback(user);
+          },
+          async signIn() {
+            user = (await call('signIn')).user;
+            tell();
+            return user;
+          },
+          async signOut() {
+            user = null;
+            tell();
+          },
+          async exchange(change) {
+            const stored = new Map(Object.entries((await call('read')).buckets));
+            await call('write', Object.fromEntries(change(stored)));
+          },
+          listAccess: async () => (await call('list')).people,
+          readAccess: async () => (await call('mine')).access,
+          requestAccess: () => call('request'),
+          withdrawAccess: () => call('withdraw'),
+          decideAccess: (id, status) => call('decide', { id, status }),
+        },
+      };
+    });
+  };
+  return fake;
+}
+
+// Opens the sync dialog from the header.
+async function openSync(page) {
+  await page.click('#sync-button');
+  await page.locator('#sync-dialog[open]').waitFor();
+}
+
+const syncName = (page) => page.locator('#sync-button').getAttribute('aria-label');
+
+async function addByHand(page, artist, title) {
+  await openTab(page, 'add');
+  const form = page.locator('#manual-form');
+  if (!(await form.isVisible())) await page.click('#manual-add summary');
+  await form.locator('[name=artist]').fill(artist);
+  await form.locator('[name=title]').fill(title);
+  await form.locator('button[type=submit]').click();
 }
 
 // jsDelivr serves npm packages as published, so the tests answer from the same packages in
@@ -244,7 +384,7 @@ function fulfillCdn(route, body) {
   return route.fulfill({ status: 200, body, contentType, headers: { 'Access-Control-Allow-Origin': '*' } });
 }
 
-const FALLBACK_INSTALLED =fs.existsSync(path.join(__dirname, '..', 'node_modules', 'barcode-detector', 'package.json'));
+const FALLBACK_INSTALLED = fs.existsSync(path.join(__dirname, '..', 'node_modules', 'barcode-detector', 'package.json'));
 
 async function shot(page, name) {
   if (!SHOTS) return;
@@ -268,6 +408,10 @@ async function openTab(page, route) {
   }, route);
 }
 
+// The discography shows as soon as its studio albums are in, then again as each page of releases
+// arrives. This waits for the last of it.
+const discoReady = (page) => page.locator('#disco-panel[aria-busy="false"]').waitFor();
+
 async function assertNoJunkText(page, where) {
   const shown = await page.locator('main').innerText();
   assert.doesNotMatch(shown, /\b(null|undefined|NaN)\b/, `stray placeholder text on ${where}`);
@@ -276,7 +420,7 @@ async function assertNoJunkText(page, where) {
 test('add, browse, edit, shuffle and find missing records', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
-    const { context, page, errors, mbCalls, coverCalls } = await openApp(browser);
+    const { context, page, errors, mbCalls, coverCalls, hold } = await openApp(browser);
 
     // Empty shelf
     assert.ok(await page.locator('#collection-empty').isVisible());
@@ -292,6 +436,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     assert.equal(typedSearches.length, 1, `typing sent ${typedSearches.length} searches`);
     assert.match(typedSearches[0].searchParams.get('query'), /artist:\(radiohead ok comp comp\*\)/);
     assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.equal(await text(page, '#search-results .artist-row'), 'Radiohead · Artist · See all albums', 'the artist typed gets a row above the albums');
     await page.locator('#search-results .result').first().getByRole('button', { name: 'Add' }).click();
     await page.locator('#toast.show', { hasText: 'Added OK Computer' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '1');
@@ -413,12 +558,17 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').classList.contains('has-album'));
     assert.match(await albumTint(), /^hsl\(/);
     await page.selectOption('#random-artist', '');
-    // Kid A is the only Double LP, and it has a cover: the big pick uses the 1200px version
+    // Kid A is the only Double LP, and it has a cover. The list above already loaded its 500px cover,
+    // so the pick shows that at once without asking for it again, then lays the 1200px cover over it.
     await page.selectOption('#random-format', 'Double LP');
+    const kidA500 = () => coverCalls.filter((url) => url.endsWith('/rg-kida/front-500')).length;
+    const kidA500Before = kidA500();
+    assert.ok(kidA500Before > 0, 'the list loaded the 500px cover');
     await page.click('#spin-btn');
     assert.equal(await text(page, '.pick-title'), 'Kid A');
-    await page.locator('#spin-sleeve .cover.loaded').waitFor();
-    assert.ok(coverCalls.some((url) => url.endsWith('/rg-kida/front-1200')));
+    assert.equal(await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-500"]').count(), 1, 'the 500px cover shows at once');
+    await page.locator('#spin-sleeve img.shown[src$="/rg-kida/front-1200"]').waitFor();
+    assert.equal(kidA500(), kidA500Before, 'the 500px cover came from memory');
     // Kid A has a cover, so the card fades down from the cover's main color
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
     const [r, g, b] = (await albumTint()).match(/\d+/g).map(Number);
@@ -439,9 +589,19 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     // Discography from a record in the collection: Radiohead already has a MusicBrainz id
     await openTab(page, 'collection');
     await page.locator('.record', { hasText: 'OK Computer' }).click();
+    // The studio albums show at once. Until every release has been checked for vinyl, none says
+    // "Vinyl not confirmed". Holding back the release browse keeps the page in that state.
+    let letBrowseThrough;
+    hold.browse = new Promise((resolve) => { letBrowseThrough = resolve; });
     await page.click('#edit-discography');
-    await page.locator('#disco-panel').waitFor();
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
     assert.equal(await text(page, '#disco-name'), 'Radiohead');
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 5');
+    assert.equal(await text(page, '#disco-missing'), 'Pablo Honey\n1993 · Album\nWishlist\nGot it\nAmnesiac\n2001 · Album\nWishlist\nGot it');
+    assert.match(await text(page, '#artist-status'), /Checking which releases came out on vinyl/);
+    hold.browse = null;
+    letBrowseThrough();
+    await discoReady(page);
     // Vinyl only is on by default. Pablo Honey has no official vinyl in MusicBrainz, but it's a studio
     // album, so it's listed anyway as "Vinyl not confirmed". The Bends has a deluxe edition on vinyl,
     // which gets its own line right after the original.
@@ -458,8 +618,13 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await assertNoJunkText(page, 'discography');
     await shot(page, '06-discography');
 
-    // Turning it off shows everything, including the CD-only expanded edition
+    // Turning it off shows everything, including the CD-only expanded edition. It also loads the
+    // albums with no official release, like the bootleg Glastonbury recording, so Live counts two.
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
+    await page.locator('.toggle', { hasText: 'Live' }).locator('.toggle-count', { hasText: '2' }).waitFor();
+    await discoReady(page);
+    assert.equal(mbCalls.at(-1).pathname, '/ws/2/release-group');
+    assert.equal(mbCalls.at(-1).searchParams.get('artist'), 'a-radiohead');
     assert.equal(await text(page, '#disco-progress-text'), 'You have 3 of 7');
     assert.match(await text(page, '#disco-missing'), /Kid A \(Expanded Edition\)\n2016 · Album\nVinyl not confirmed\nConfirm/);
     await page.locator('.toggle', { hasText: 'Vinyl only' }).click();
@@ -541,8 +706,9 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     const callsBefore = mbCalls.length;
     await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
     await page.locator('#disco-name', { hasText: 'Portishead' }).waitFor();
+    await discoReady(page);
     assert.equal(await text(page, '#disco-progress-text'), 'You have 1 of 3');
-    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release', '/ws/2/release']);
+    assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release']);
     const linked = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.title === 'Dummy').artistId);
     assert.equal(linked, 'a-portishead');
 
@@ -559,6 +725,28 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
     assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
 
+    // A saved copy more than a week old still shows at once, while a new one loads behind it
+    await page.evaluate((key) => {
+      const saved = JSON.parse(localStorage.getItem(key));
+      saved['a-radiohead'].fetchedAt -= 10 * 24 * 60 * 60 * 1000;
+      localStorage.setItem(key, JSON.stringify(saved));
+    }, 'recordcatalog.discographies.v6');
+    await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
+    await discoReady(page);
+    let letRefreshThrough;
+    hold.browse = new Promise((resolve) => { letRefreshThrough = resolve; });
+    await page.selectOption('#disco-artist', { label: 'Radiohead (6)' });
+    await page.locator('#disco-panel[aria-busy="true"]').waitFor();
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+    assert.match(await text(page, '#disco-updated'), /Updated 10 days ago/);
+    assert.match(await text(page, '#disco-missing'), /Pablo Honey\n1993 · Album\nVinyl not confirmed/, 'the saved copy keeps its labels');
+    assert.match(await text(page, '#artist-status'), /Checking MusicBrainz for changes/);
+    hold.browse = null;
+    letRefreshThrough();
+    await discoReady(page);
+    assert.match(await text(page, '#disco-updated'), /Updated just now/);
+    assert.equal(await text(page, '#disco-progress-text'), 'You have 5 of 7');
+
     // Backup, wipe, restore
     await openTab(page, 'collection');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
@@ -569,10 +757,132 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     assert.ok(await page.locator('#collection-empty').isVisible());
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'the empty shelf shows one Import button');
+    await page.click('#collection-empty .import-open');
     await page.setInputFiles('#import-file', backupPath);
+    await page.locator('#import-summary', { hasText: 'A Record Catalog backup with 7 records and 1 on your wishlist.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), path.basename(backupPath), 'the backup shows by name, not as JSON');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-format-field').isHidden(), 'a backup keeps its own formats');
+    assert.equal(await text(page, '#import-submit'), 'Import backup');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Imported 7 records and 1 for your wishlist' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '7');
     assert.equal(await wishCount(), '1');
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+// The discography asks for an artist by id, either as a browse parameter or inside a search query.
+const asksForArtist = (url, id) => url.searchParams.get('artist') === id || (url.searchParams.get('query') || '').includes(`arid:"${id}"`);
+
+test('a search for an artist opens their discography in one tap', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 375, height: 760 } });
+    await openTab(page, 'add');
+    const searchBox = page.locator('#search-form [name=q]');
+    const callsBefore = mbCalls.length;
+    await searchBox.fill('radiohead');
+    const row = page.locator('#search-results .artist-row');
+    await row.waitFor();
+    assert.equal(mbCalls.length - callsBefore, 1, 'the row comes from the search itself, with no request of its own');
+    assert.equal(await row.innerText(), 'Radiohead · Artist · See all albums');
+    assert.equal(await page.locator('#search-results li').first().getAttribute('class'), 'artist-row', 'the row is above the albums');
+    assert.equal(await page.locator('#search-results .result').count(), 2);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'no sideways scrolling on a phone');
+    await shot(page, '10-artist-row');
+
+    await row.getByRole('button', { name: /See all albums/ }).click();
+    await page.locator('#disco-name', { hasText: 'Radiohead' }).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#discography');
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-radiohead')), 'it loads the artist by their MusicBrainz id');
+    assert.match(await text(page, '#disco-missing'), /OK Computer/);
+
+    // An artist MusicBrainz files under another name shows as the sleeve credits them, and still
+    // opens by their MusicBrainz id
+    await openTab(page, 'add');
+    await searchBox.fill('takanaka rainbow goblins');
+    await page.locator('#search-results .artist-row', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.equal(await row.innerText(), 'Masayoshi Takanaka · Artist · See all albums');
+    await row.getByRole('button').click();
+    await page.locator('#disco-name', { hasText: 'Masayoshi Takanaka' }).waitFor();
+    assert.ok(mbCalls.some((url) => asksForArtist(url, 'a-takanaka')), 'it loads 高中正義 by id');
+    assert.match(await text(page, '#disco-missing'), /Seychelles/);
+
+    // A barcode names no artist, so the row goes away
+    await openTab(page, 'add');
+    await searchBox.fill('0 724352 775324');
+    await searchBox.press('Enter');
+    await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+    assert.equal(await page.locator('#search-results .artist-row').count(), 0);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the random pick shows the 500px cover while the 1200px one loads', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, coverCalls } = await openApp(browser);
+    // Kid A's 1200px cover is slow to arrive, and OK Computer has no 1200px cover at all.
+    await context.route(/\/front-1200$/, async (route) => {
+      if (route.request().url().includes('/rg-okc/')) return route.fulfill({ status: 404, body: '' });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return route.fallback();
+    });
+    await page.evaluate(() => {
+      const record = (id, title, format) => ({ id, artist: 'Radiohead', title, year: 2000, format, releaseGroupId: `rg-${id}`, notes: '', addedAt: new Date(2024, 0, 1).toISOString() });
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
+    });
+    await page.goto(`${PAGE_URL}#random`);
+    await page.reload();
+    const shown = () => page.locator('#spin-sleeve img.shown').evaluateAll((imgs) => imgs.map((img) => img.src.split('/').pop()));
+
+    // Opened straight on Random, so nothing has loaded Kid A's cover yet, and its color hasn't been
+    // read. Only the 1200px cover is asked for, so it doesn't share the connection with two others.
+    const calls = (size) => coverCalls.filter((url) => url.endsWith(`/rg-kida/front-${size}`)).length;
+    assert.ok(!coverCalls.some((url) => url.includes('/rg-kida/')));
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-1200']);
+    assert.equal(calls(500), 0);
+
+    // The cover's main color is kept with the record. After a reload the card takes it at once,
+    // without reading the cover again.
+    const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
+    await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    assert.equal(saved, await tint());
+    await page.reload();
+    const colorReads = calls(250);
+    await page.selectOption('#random-format', 'Double LP');
+    await page.click('#spin-btn');
+    assert.equal(await tint(), saved);
+    assert.equal(calls(250), colorReads, 'no second read of the cover');
+
+    // With no color to read, both sizes are asked for. The 500px one shows first, and the 1200px
+    // one goes on top when it arrives.
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500'], 'the 500px cover shows while the 1200px one loads');
+    await page.locator('#spin-sleeve img.shown[src$="front-1200"]').waitFor();
+    assert.deepEqual(await shown(), ['front-500', 'front-1200'], 'the 1200px cover lies on top');
+
+    // Without a 1200px cover, the 500px one takes its place
+    await page.selectOption('#random-format', 'LP');
+    await page.click('#spin-btn');
+    assert.equal(await text(page, '.pick-title'), 'OK Computer');
+    await page.waitForFunction(() => document.querySelectorAll('#spin-sleeve img').length === 1);
+    await page.locator('#spin-sleeve img.shown').waitFor();
+    assert.deepEqual(await shown(), ['front-500']);
 
     assert.deepEqual(errors, []);
     await context.close();
@@ -595,9 +905,9 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
     const byTitle = async () => Object.fromEntries((await records()).map((r) => [r.title, r]));
 
-    await page.click('#list-import-tools');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'list-heading', 'the list box waits for a tap');
-    await page.fill('#list-form [name=list]', [
+    await page.click('#import-btn');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'import-heading', 'the list box waits for a tap');
+    await page.fill('#import-form [name=text]', [
       'Radiohead - The Bends',
       'Portishead - Dumy (Signed)',
       'Radiohed - Kid A',
@@ -606,14 +916,14 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
       'Weezer - Weezer',
       'a line with no dash',
     ].join('\n'));
-    const summary = await text(page, '#list-summary');
+    const summary = await text(page, '#import-summary');
     assert.match(summary, /4 records to add/);
     assert.match(summary, /1 record already in your collection is skipped/);
     assert.match(summary, /1 line named an album already on the list/);
     assert.match(summary, /1 line couldn't be read[\s\S]*a line with no dash/);
-    assert.equal(await text(page, '#list-submit'), 'Add 4 records');
+    assert.equal(await text(page, '#import-submit'), 'Add 4 records');
     await shot(page, 'import-01-dialog');
-    await page.click('#list-submit');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 4 records' }).waitFor();
     assert.equal(await text(page, '#nav-count'), '5');
 
@@ -647,16 +957,404 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
     await page.reload();
     assert.ok(await page.locator('#lookup').isHidden());
 
-    // Undo takes the whole import back
-    await page.click('#list-import-tools');
-    await page.fill('#list-form [name=list]', 'Portishead - Third\nPortishead - Portishead');
-    await page.click('#list-submit');
+    // Undo takes the whole import back, and puts back the wishes it ticked off
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
+    });
+    await page.reload();
+    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.wishlist.v1')).map((w) => w.title));
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
+    await page.click('#import-submit');
     await page.locator('#toast.show', { hasText: 'Added 2 records' }).waitFor();
+    assert.deepEqual(await wishes(), [], 'owning Third takes it off the wishlist');
     await page.click('#toast .toast-action');
     assert.equal(await text(page, '#nav-count'), '5');
+    assert.deepEqual(await wishes(), ['Third']);
     await page.waitForFunction(() => document.querySelector('#lookup').hidden);
 
     await assertNoJunkText(page, 'collection after import');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('two tabs open at once keep both their changes', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page: first, errors } = await openApp(browser);
+    const second = await context.newPage();
+    second.on('pageerror', (err) => errors.push(err.message));
+    await second.goto(PAGE_URL);
+
+    await addByHand(first, 'Steely Dan', 'Aja');
+    await second.locator('#nav-count', { hasText: '1' }).waitFor({ timeout: 5000 });
+    await addByHand(second, 'Radiohead', 'OK Computer');
+    await first.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    await first.reload();
+    assert.equal(await text(first, '#nav-count'), '2');
+    const saved = await first.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(saved, ['Aja', 'OK Computer']);
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+// The app's own test for a filled-in config, so a PASTE_ mentioned in a comment doesn't count.
+const syncConfigFilledIn = (() => {
+  const sandbox = { self: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'sync-config.js'), 'utf8'), sandbox);
+  return require('../js/sync.js').isConfigured(sandbox.self.RC.syncConfig);
+})();
+
+test('sync stays hidden and loads nothing from Firebase until it is set up', { skip: (!chromium && 'playwright is not installed') || (syncConfigFilledIn && 'js/sync-config.js is filled in') }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, firebaseCalls } = await openApp(browser);
+    assert.equal(await page.locator('#sync-button').isHidden(), true);
+    assert.deepEqual(firebaseCalls, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('enabled: false hides sync and calls nothing, even when it is set up', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    for (const enabled of [false, true]) {
+      const fake = fakeSyncService();
+      // Stands in for a filled-in js/sync-config.js with enabled set as given.
+      const filledIn = (context) => context.addInitScript((on) => {
+        let config;
+        Object.defineProperty(window.RC, 'syncConfig', {
+          get: () => config,
+          set: (value) => {
+            config = { ...value, apiKey: 'key', authDomain: 'example.firebaseapp.com', projectId: 'example', appId: 'app', enabled: on };
+          },
+        });
+      }, enabled);
+      const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: async (c) => { await fake.install()(c); await filledIn(c); } });
+      assert.equal(await page.evaluate(() => RC.syncConfig.enabled), enabled);
+      assert.equal(await page.locator('#sync-button').isVisible(), enabled, `button shown when enabled is ${enabled}`);
+      if (!enabled) assert.deepEqual(fake.calls, []);
+      assert.deepEqual(firebaseCalls, []);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('two devices sync their collections after signing in', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const pc = await openApp(browser, { setup: fake.install() });
+    const phone = await openApp(browser, { setup: fake.install(), viewport: { width: 390, height: 844 } });
+    await addByHand(pc.page, 'Steely Dan', 'Aja');
+    await addByHand(phone.page, 'Can', 'Tago Mago');
+
+    assert.equal(await syncName(pc.page), 'Sync: signed out');
+    await openSync(pc.page);
+    assert.match(await text(pc.page, '#sync-body'), /Sign in with Google on each device/);
+    await pc.page.click('#sync-sign-in');
+    await pc.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.match(await text(pc.page, '#sync-body'), /Signed in as owner@example.com\./);
+    assert.equal(await syncName(pc.page), 'Sync: synced just now');
+    assert.equal(await pc.page.locator('#sync-account-id').count(), 0, 'the owner has no use for the setup help');
+    assert.match(await text(pc.page, '#sync-people'), /No requests waiting\.[\s\S]*Nobody else syncs yet\./);
+
+    await openSync(phone.page);
+    await phone.page.click('#sync-sign-in');
+    await phone.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    await shot(phone.page, 'sync-signed-in');
+
+    await pc.page.click('#sync-now');
+    await pc.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(await titles(pc.page), ['Aja', 'Tago Mago']);
+    assert.deepEqual(await titles(phone.page), ['Aja', 'Tago Mago']);
+
+    await phone.page.click('#sync-sign-out');
+    await phone.page.locator('#sync-sign-in').waitFor();
+    assert.equal(await text(phone.page, '#nav-count'), '2', 'signing out keeps the records');
+    await phone.page.click('#sync-close');
+    assert.equal(await phone.page.locator('#sync-dialog').isVisible(), false);
+
+    assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
+    assert.deepEqual([...pc.errors, ...phone.errors], []);
+    await pc.context.close();
+    await phone.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a guest asks for access, the owner approves, and the guest syncs only their own collection', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const owner = await openApp(browser, { setup: fake.install() });
+    const ana = await openApp(browser, { setup: fake.install(ANA), viewport: { width: 375, height: 760 } });
+    await addByHand(owner.page, 'Steely Dan', 'Aja');
+    await addByHand(ana.page, 'Can', 'Tago Mago');
+
+    await openSync(ana.page);
+    await ana.page.click('#sync-sign-in');
+    await ana.page.locator('#sync-request').waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: no access yet');
+    assert.equal(await text(ana.page, '#sync-privacy'), "Asking shares your name and email with the site's owner, and your collection is kept in their Firebase project.");
+    assert.equal(await ana.page.locator('#sync-people, #sync-now, [data-approve]').count(), 0, 'a guest sees no owner controls and no Sync now');
+    assert.equal(await ana.page.locator('.sync-account[open]').count(), 0, 'the setup help starts closed');
+    await shot(ana.page, 'sync-guest-request');
+
+    await ana.page.click('#sync-request');
+    await ana.page.locator('#sync-status', { hasText: "You're waiting for the site's owner to approve it." }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: waiting for approval');
+    assert.equal(await ana.page.locator('#sync-account-id').count(), 0);
+    assert.deepEqual(fake.buckets.get(ANA.id), undefined, 'nothing synced while pending');
+
+    await openSync(owner.page);
+    await owner.page.click('#sync-sign-in');
+    await owner.page.locator('#sync-requests [data-person]').waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-count').isVisible(), true);
+    assert.equal(await text(owner.page, '#sync-count'), '1');
+    assert.equal(await syncName(owner.page), 'Sync: synced just now, 1 request waiting');
+    assert.match(await text(owner.page, '#sync-requests'), /Ana Lima\s+ana@example.com/);
+    await shot(owner.page, 'sync-owner-requests');
+    await owner.page.click(`[data-approve="${ANA.id}"]`);
+    await owner.page.locator(`#sync-approved [data-person="${ANA.id}"]`).waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-count').isHidden(), true);
+    assert.equal(fake.access.get(ANA.id).status, 'approved');
+
+    await ana.page.click('#sync-check');
+    await ana.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: synced just now');
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    assert.deepEqual(await titles(ana.page), ['Tago Mago'], "Ana doesn't get the owner's records");
+    await owner.page.click('#sync-now');
+    await owner.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.deepEqual(await titles(owner.page), ['Aja'], "the owner doesn't get Ana's records");
+
+    await owner.page.click(`[data-remove="${ANA.id}"]`);
+    assert.match(await text(owner.page, `[data-person="${ANA.id}"]`), /Remove Ana Lima\? They can't ask again\./);
+    assert.equal(fake.access.get(ANA.id).status, 'approved', 'nothing changes before the second tap');
+    await owner.page.click(`[data-confirm="${ANA.id}"]`);
+    await owner.page.locator('#sync-people', { hasText: 'Nobody else syncs yet.' }).waitFor({ timeout: 5000 });
+    assert.equal(fake.access.get(ANA.id).status, 'denied');
+
+    await ana.page.click('#sync-now');
+    await ana.page.locator('#sync-status', { hasText: "You don't have access to sync on this site." }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(ana.page), 'Sync: no access');
+    assert.equal(await ana.page.locator('#sync-request, #sync-now').count(), 0);
+
+    assert.deepEqual([...owner.firebaseCalls, ...ana.firebaseCalls], []);
+    assert.deepEqual([...owner.errors, ...ana.errors], []);
+    await owner.context.close();
+    await ana.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the owner denies a request, and a guest can withdraw one', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const ana = await openApp(browser, { setup: fake.install(ANA) });
+    const ben = await openApp(browser, { setup: fake.install(BEN) });
+    for (const guest of [ana, ben]) {
+      await openSync(guest.page);
+      await guest.page.click('#sync-sign-in');
+      await guest.page.click('#sync-request');
+      await guest.page.locator('#sync-withdraw').waitFor({ timeout: 5000 });
+    }
+    await ben.page.click('#sync-withdraw');
+    await ben.page.locator('#sync-request').waitFor({ timeout: 5000 });
+    assert.equal(fake.access.has(BEN.id), false);
+
+    const owner = await openApp(browser, { setup: fake.install() });
+    await openSync(owner.page);
+    await owner.page.click('#sync-sign-in');
+    await owner.page.locator(`[data-deny="${ANA.id}"]`).waitFor({ timeout: 5000 });
+    assert.equal(await owner.page.locator('#sync-requests [data-person]').count(), 1, 'a withdrawn request is gone');
+    await owner.page.click(`[data-deny="${ANA.id}"]`);
+    await owner.page.click(`[data-person="${ANA.id}"] .link`);
+    assert.equal(fake.access.get(ANA.id).status, 'pending', 'Cancel keeps the request');
+    await owner.page.click(`[data-deny="${ANA.id}"]`);
+    await owner.page.click(`[data-confirm="${ANA.id}"]`);
+    await owner.page.locator('#sync-people', { hasText: 'No requests waiting.' }).waitFor({ timeout: 5000 });
+    assert.equal(fake.access.get(ANA.id).status, 'denied');
+
+    await ana.page.click('#sync-check');
+    await ana.page.locator('#sync-status', { hasText: "You don't have access to sync on this site." }).waitFor({ timeout: 5000 });
+    assert.deepEqual([...ana.errors, ...ben.errors, ...owner.errors], []);
+    for (const device of [ana, ben, owner]) await device.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sync says what went wrong, with the account id for setting up the rules', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: fake.install() });
+    fake.fail = 'permission-denied';
+    await openSync(page);
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-problem').waitFor({ timeout: 5000 });
+    assert.equal(await text(page, '#sync-problem'), "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.");
+    assert.equal(await syncName(page), 'Sync: something went wrong');
+    assert.doesNotMatch(await text(page, '#sync-body'), /\b(null|undefined|NaN)\b/, 'no stray placeholder text while access is unknown');
+    await page.click('.sync-account summary');
+    assert.equal(await text(page, '#sync-account-id'), 'test-account-id');
+
+    fake.fail = 'resource-exhausted';
+    await page.click('#sync-sign-out');
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-problem', { hasText: "This site has used up today's free Firebase reads." }).waitFor({ timeout: 5000 });
+
+    fake.fail = null;
+    await page.click('#sync-sign-out');
+    await page.click('#sync-sign-in');
+    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#sync-problem').count(), 0);
+
+    fake.fail = 'unavailable';
+    await page.click('#sync-now');
+    await page.locator('#sync-problem', { hasText: "Couldn't reach the sync service." }).waitFor({ timeout: 5000 });
+
+    assert.deepEqual(firebaseCalls, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the sync button fits the header on a phone and on a desktop, in light and dark mode', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    fake.access.set(ANA.id, { ...ANA, status: 'pending', requestedAt: new Date().toISOString(), decidedAt: null });
+    for (const [width, height] of [[375, 760], [1100, 900]]) {
+      for (const colorScheme of ['light', 'dark']) {
+        const plain = await openApp(browser, { viewport: { width, height }, colorScheme });
+        const before = await plain.page.locator('.app-header').boundingBox();
+        await plain.context.close();
+        const { context, page, errors } = await openApp(browser, { setup: fake.install(), viewport: { width, height }, colorScheme });
+        const header = () => page.locator('.app-header').boundingBox();
+        await openSync(page);
+        await page.click('#sync-sign-in');
+        await page.locator('#sync-requests [data-person]').waitFor({ timeout: 5000 });
+        await shot(page, `sync-dialog-${width}-${colorScheme}`);
+        await page.click('#sync-close');
+        const button = await page.locator('#sync-button').boundingBox();
+        const brand = await page.locator('.brand').boundingBox();
+        const tabs = await page.locator('.tabs').boundingBox();
+        const end = await page.locator('.header-inner').evaluate((el) => el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight));
+        assert.equal((await header()).height, before.height, `the button adds no height at ${width}px`);
+        assert.ok(Math.abs(button.x + button.width - end) < 1, `the button ends at the header's right edge at ${width}px`);
+        assert.ok(Math.abs(button.y + button.height / 2 - (brand.y + brand.height / 2)) < 4, `the button lines up with the name at ${width}px`);
+        assert.ok(button.x >= (width < 640 ? brand.x + brand.width : tabs.x + tabs.width), `the button doesn't cover the name or the tabs at ${width}px`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0, `no sideways scroll at ${width}px (${colorScheme})`);
+        assert.equal(await page.locator('#sync-count').isVisible(), true);
+        assert.equal(await text(page, '#sync-count'), '1');
+        await shot(page, `sync-header-${width}-${colorScheme}`);
+        assert.deepEqual(errors, []);
+        await context.close();
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('imports spreadsheets saved as Excel or CSV, and says what to do with a Numbers file', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
+    await page.evaluate(() => {
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+        id: 'dummy', artist: 'Portishead', artistId: 'a-portishead', title: 'Dummy', year: 1994, releaseGroupId: 'rg-dummy',
+        format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
+      }]));
+    });
+    await page.reload();
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+
+    assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', 'Steely Dan - Aja');
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records.numbers'));
+    await page.locator('#import-summary', { hasText: "can't read Numbers or old Excel (.xls) files" }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.numbers', 'the file shows by name in place of the paste box');
+    assert.ok(await page.locator('#import-form [name=text]').isHidden());
+    assert.ok(await page.locator('#import-submit').isDisabled());
+    await page.click('#import-paste-btn');
+    assert.ok(await page.locator('#import-chosen').isHidden());
+    assert.equal(await page.inputValue('#import-form [name=text]'), 'Steely Dan - Aja', 'Paste instead brings back what was pasted');
+    await page.locator('#import-summary', { hasText: '1 record to add.' }).waitFor();
+
+    // An .xlsx file, unzipped by the browser itself
+    await page.setInputFiles('#import-file', path.join(__dirname, 'fixtures', 'records-xlsxwriter.xlsx'));
+    await page.locator('#import-summary', { hasText: '5 records to add.' }).waitFor();
+    assert.match(await text(page, '#import-summary'), /Read the Artist, Album, Year, Format, Label and Notes columns\.[\s\S]*1 row is a CD or cassette/);
+    await shot(page, 'import-05-excel');
+
+    // Excel on Windows saves CSV in Windows-1252, where ö and ’ are single bytes.
+    const csv = [
+      'Artist,Album,Year,Format,Label,Price',
+      'Portishead,Dummy,1994,LP,Go! Beat',
+      '"Crosby, Stills & Nash",Crosby Stills & Nash,1969,LP,Atlantic',
+      'Motörhead,Ace of Spades (Signed),1980,"7""",Bronze',
+      'Björk,Homogenic,1997-09-22,,One Little Indian',
+      ',Didn’t Say,1999,LP,',
+      'Prince,Purple Rain,1984,Cassette,Warner Bros.',
+    ].join('\r\n');
+    const windows1252 = Buffer.from([...csv].map((ch) => (ch === '’' ? 0x92 : ch.charCodeAt(0))));
+    await page.setInputFiles('#import-file', { name: 'records.csv', mimeType: 'text/csv', buffer: windows1252 });
+    await page.locator('#import-summary', { hasText: '3 records to add.' }).waitFor();
+    assert.equal(await text(page, '#import-file-name'), 'records.csv');
+    const summary = await text(page, '#import-summary');
+    assert.match(summary, /Read the Artist, Album, Year, Format and Label columns and left out the Price column\./);
+    assert.match(summary, /1 record already in your collection is skipped/);
+    assert.match(summary, /1 row couldn't be read[\s\S]*Each row needs an artist and a title\.[\s\S]*Didn’t Say, 1999, LP/);
+    assert.match(summary, /1 row is a CD or cassette, so it's left out\.[\s\S]*Prince, Purple Rain, 1984, Cassette, Warner Bros\./);
+    assert.ok(await page.locator('#import-format-field').isVisible());
+    await page.selectOption('#import-format', 'Double LP');
+    await shot(page, 'import-04-spreadsheet');
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 3 records' }).waitFor();
+    assert.equal(await text(page, '#nav-count'), '4');
+
+    const added = Object.fromEntries((await records()).map((r) => [r.title, [r.artist, r.year, r.format, r.notes]]));
+    assert.deepEqual(added['Crosby Stills & Nash'], ['Crosby, Stills & Nash', 1969, 'LP', 'Label: Atlantic']);
+    assert.deepEqual(added['Ace of Spades'], ['Motörhead', 1980, '45', 'Signed; Label: Bronze'], 'the umlaut survives and 7" is a 45');
+    assert.deepEqual(added.Homogenic, ['Björk', 1997, 'Double LP', 'Label: One Little Indian'], 'no format in the file, so Add as decides');
+    await page.locator('#lookup', { hasText: 'Found 0 of 3 imported records' }).waitFor({ timeout: 20000 });
+
+    // A Discogs collection export, pasted. Its columns are from memory and other parsers, not a real export.
+    await page.click('#import-btn');
+    await page.fill('#import-form [name=text]', [
+      'Catalog#,Artist,Title,Label,Format,Rating,Released,release_id,CollectionFolder,Date Added,Collection Media Condition,Collection Sleeve Condition,Collection Notes',
+      'DGC-24425,Nirvana (2),Nevermind,DGC,"LP, Album",,1991,1111111,Uncategorized,2023-01-07 10:00:00,Very Good Plus (VG+),,',
+    ].join('\n'));
+    assert.match(await text(page, '#import-summary'), /1 record to add\.[\s\S]*Collection Notes columns of this Discogs export and left out the Rating, release_id, CollectionFolder and Date Added columns\./);
+    await page.click('#import-submit');
+    await page.locator('#toast.show', { hasText: 'Added 1 record' }).waitFor();
+    const nevermind = (await records()).find((r) => r.title === 'Nevermind');
+    assert.deepEqual([nevermind.artist, nevermind.year, nevermind.notes], ['Nirvana', null, 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991; Media condition: VG+']);
+
     assert.deepEqual(errors, []);
     await context.close();
   } finally {
@@ -732,13 +1430,13 @@ test('offers Scan barcode wherever the page can use the camera', { skip: !chromi
   const browser = await chromium.launch();
   try {
     {
-      const { context, page } = await openApp(browser, PHONE, noCamera);
+      const { context, page } = await openApp(browser, { ...PHONE, setup: noCamera });
       await openTab(page, 'add');
       assert.ok(await page.locator('#scan-btn').isHidden(), 'no Scan button without camera access');
       await context.close();
     }
     for (const [name, setup] of [['no built-in reader', undefined], ['a built-in reader for QR codes only', fakeCamera({ builtIn: ['qr_code'] })], ['a built-in reader', fakeCamera()]]) {
-      const { context, page, errors, cdnCalls } = await openApp(browser, PHONE, setup);
+      const { context, page, errors, cdnCalls } = await openApp(browser, { ...PHONE, setup });
       await openTab(page, 'add');
       assert.ok(await page.locator('#scan-btn').isVisible(), `Scan shows with ${name}`);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -756,7 +1454,7 @@ test('offers Scan barcode wherever the page can use the camera', { skip: !chromi
 test('scans with the browser\'s own barcode reader and loads no other', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
-    const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, PHONE, fakeCamera());
+    const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera() });
     await openTab(page, 'add');
     await page.click('#scan-btn');
     await page.locator('#scan-dialog').waitFor();
@@ -777,7 +1475,7 @@ test('scans with the fallback reader where the browser has none for record barco
   const browser = await chromium.launch();
   try {
     for (const [name, builtIn] of [['no built-in reader', null], ['a built-in reader for QR codes only', ['qr_code']]]) {
-      const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, PHONE, fakeCamera({ builtIn }));
+      const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ builtIn }) });
       await openTab(page, 'add');
       await page.click('#scan-btn');
       await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
@@ -814,7 +1512,7 @@ test('says when the fallback reader can\'t load, and tries again on the next sca
   ];
   try {
     for (const [name, pattern, fail] of failures) {
-      const { context, page, mbCalls } = await openApp(browser, PHONE, fakeCamera({ builtIn: null }));
+      const { context, page, mbCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ builtIn: null }) });
       await context.route(pattern, fail);
       await openTab(page, 'add');
       await page.click('#scan-btn');
@@ -836,7 +1534,7 @@ test('says when the fallback reader can\'t load, and tries again on the next sca
 test('Cancel wins over a barcode read at the same moment', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
-    const { context, page, errors, mbCalls } = await openApp(browser, PHONE, fakeCamera({ holdRead: true }));
+    const { context, page, errors, mbCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ holdRead: true }) });
     await openTab(page, 'add');
     await page.click('#scan-btn');
     await page.waitForFunction(() => window.readHeld);
@@ -859,7 +1557,7 @@ test('explains a blocked camera, and helps when nothing is read', { skip: !chrom
   const phone = { viewport: { width: 375, height: 760 } };
   try {
     {
-      const { context, page, errors, mbCalls } = await openApp(browser, phone, fakeCamera({ cameraError: 'NotAllowedError' }));
+      const { context, page, errors, mbCalls } = await openApp(browser, { ...phone, setup: fakeCamera({ cameraError: 'NotAllowedError' }) });
       await openTab(page, 'add');
       await page.click('#scan-btn');
       await page.locator('#search-status[data-kind=error]', { hasText: 'The camera is blocked for this site.' }).waitFor();
@@ -869,7 +1567,7 @@ test('explains a blocked camera, and helps when nothing is read', { skip: !chrom
       await context.close();
     }
 
-    const { context, page, errors, mbCalls } = await openApp(browser, phone, fakeCamera({ barcode: null }));
+    const { context, page, errors, mbCalls } = await openApp(browser, { ...phone, setup: fakeCamera({ barcode: null }) });
     await page.clock.install();
     await page.reload();
     await openTab(page, 'add');
@@ -915,6 +1613,16 @@ test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting
       assert.deepEqual(await spinState(), ['running', 'running'], 'the record and its label turn together');
       await page.mouse.move(500, 500);
       assert.deepEqual(await spinState(), ['paused', 'paused']);
+
+      // The empty shelf and the empty wishlist draw the header's record, whole
+      for (const view of ['collection', 'wishlist']) {
+        if (view === 'wishlist') await openTab(page, 'wishlist');
+        const emptyRecord = await page.locator(`#${view}-empty .empty-logo use`).evaluate((use) => ({
+          isHeaderLogo: !!document.querySelector(use.getAttribute('href'))?.closest('.brand'),
+          width: Math.round(use.getBBox().width),
+        }));
+        assert.deepEqual(emptyRecord, { isHeaderLogo: true, width: 60 }, `${view} (${colorScheme})`);
+      }
 
       assert.deepEqual(errors, []);
       await context.close();
@@ -974,7 +1682,7 @@ test('fits a phone screen in light and dark mode', { skip: !chromium && 'playwri
         if (view === 'random') await page.click('#spin-btn');
         if (view === 'discography') {
           await page.selectOption('#disco-artist', { label: 'Radiohead (2)' });
-          await page.locator('#disco-panel').waitFor();
+          await discoReady(page);
         }
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 0, `${view} (${colorScheme}) scrolls sideways by ${overflow}px`);

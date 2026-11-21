@@ -1,0 +1,33 @@
+{
+  "artists": {
+    "Radiohead": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+    "Miles Davis": "561d854a-6a28-4aa7-8c99-323e6ce46c2a",
+    "Television": "490bde43-5edb-4a93-b3b3-7a0465fd8909",
+    "Low": "42faad37-8aaa-42e4-a300-5a7dae79ed24",
+    "Yes": "c1d4f2ba-cf39-460c-9528-6b827d3417a1",
+    "Can": "13501c7d-d181-45ba-af52-5f101d8516a0",
+    "The The": "a7409219-a681-4072-adb2-5285106ce6f2",
+    "Fleetwood Mac": "bd13909f-1c29-4c27-a874-d4aaf27c5b1a",
+    "Steely Dan": "e01c3376-15fa-40d7-b747-5f219bdefdd7",
+    "David Bowie": "5441c29d-3602-4898-b1a1-b77fa23b8e50",
+    "Weezer": "6fe07aa5-fec0-4eca-a456-f29bff451b04",
+    "Boston": "0d8b0d50-e4cf-4da4-965d-f24c58ec3268",
+    "Pink Floyd": "83d91898-7763-47d7-b03b-b92132375c47",
+    "Metallica": "65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab",
+    "Masayoshi Takanaka": "facf743e-1231-410d-bdf1-9ba11a6a4f3c",
+    "Кино": "064db6e8-fdfb-4acb-a327-fc2de75b37de",
+    "Sigur Rós": "f6f2326f-6b25-4170-b89d-e235b25508e8",
+    "Portishead": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+    "Chic": "a4ed036b-5f18-439c-b1e1-96d205bab255",
+    "Nirvana": "5b11f4ce-a62d-471e-81fc-a69a8278c7da",
+    "The Beatles": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+    "The Beach Boys": "ebfc1398-8d96-47e3-82c3-f782abcdb13d",
+    "Joni Mitchell": "a6de8ef9-b1a1-4756-97aa-481bbb8a4069",
+    "Kraftwerk": "5700dcd4-c139-4f31-aa3e-6382b9af9032",
+    "Talking Heads": "a94a7155-c79d-4409-9fcf-220cb0e4dc3a",
+    "Björk": "87c5dedd-371d-4a53-9f7f-80522fb7f3cb"
+  },
+  "releaseGroups": {
+    "blue": "c7b245c9-8099-32ea-af95-893acedde2cf"
+  }
+}

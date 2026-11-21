@@ -58,22 +58,27 @@
 
   // The main color of a cover, for tinting the screen behind it. A small copy is drawn to a canvas
   // and sampled, which needs the image server to allow cross-origin reads. When it doesn't, or there's
-  // no cover, this falls back to the record's placeholder color.
+  // no cover, this falls back to the record's placeholder color. A color read from a cover is kept
+  // with the record, so the next time it shows at once, without downloading anything.
   const albumColors = new Map();
 
   function albumColor(item) {
     const fallback = labelColor(item);
     if (!item.releaseGroupId) return Promise.resolve(fallback);
+    if (item.coverColor) return Promise.resolve(item.coverColor);
     if (!albumColors.has(item.releaseGroupId)) {
       albumColors.set(item.releaseGroupId, new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          let color = null;
           try {
-            resolve(mainColor(img) || fallback);
+            color = mainColor(img);
           } catch (e) {
-            resolve(fallback); // the browser refused to read the pixels
+            // the browser refused to read the pixels
           }
+          if (color) store.setCoverColor(item.id, color);
+          resolve(color || fallback);
         };
         img.onerror = () => resolve(fallback);
         img.src = mb.coverUrl(item.releaseGroupId, 250);
@@ -131,7 +136,7 @@
   }
 
   // Cover Art Archive sizes in pixels, about 3x the size shown so covers stay sharp on phone screens.
-  const COVER_SIZES = { sm: [500], md: [500], grid: [500], lg: [1200, 500] };
+  const COVER_SIZES = { sm: 500, md: 500, grid: 500, lg: 1200 };
   // Covers that have loaded once show straight away when a list is drawn again, instead of fading in.
   const loadedCovers = new Set();
 
@@ -145,21 +150,36 @@
     placeholder.style.setProperty('--label', labelColor(item));
     box.append(placeholder);
     if (item.releaseGroupId) {
-      const sizes = COVER_SIZES[size];
-      let attempt = 0;
-      const img = h('img', { src: mb.coverUrl(item.releaseGroupId, sizes[0]), alt: '', loading: 'lazy', decoding: 'async' });
-      if (loadedCovers.has(img.src)) box.classList.add('loaded');
-      img.addEventListener('load', () => {
-        loadedCovers.add(img.src);
-        box.classList.add('loaded');
-      });
-      // Try the next size down if the big one isn't there, then leave the placeholder showing.
-      img.addEventListener('error', () => {
-        attempt += 1;
-        if (attempt < sizes.length) img.src = mb.coverUrl(item.releaseGroupId, sizes[attempt]);
-        else img.remove();
-      });
-      box.append(img);
+      const url = (px) => mb.coverUrl(item.releaseGroupId, px);
+      const add = (px, fallback) => {
+        const img = h('img', { src: url(px), alt: '', loading: 'lazy', decoding: 'async' });
+        const show = () => {
+          img.classList.add('shown');
+          box.classList.add('loaded');
+        };
+        if (loadedCovers.has(img.src)) show();
+        img.addEventListener('load', () => {
+          loadedCovers.add(img.src);
+          show();
+        });
+        // Without this size, try the fallback, then leave the placeholder showing.
+        img.addEventListener('error', () => {
+          img.remove();
+          if (fallback) add(fallback);
+        });
+        box.append(img);
+      };
+      const px = COVER_SIZES[size];
+      // The big random pick lays its sharp cover over the 500px one, which shows first: at once when
+      // the collection has already loaded it, or sooner because it is smaller. While the cover's
+      // color is still being read, though, a third download slowed the sharp cover by about half a
+      // second on 4G, so then it asks for 1200px alone (docs/investigations/random-cover-speed.md).
+      if (px > 500 && (loadedCovers.has(url(500)) || item.coverColor)) {
+        add(500);
+        add(px);
+      } else {
+        add(px, px > 500 ? 500 : null);
+      }
     }
     return box;
   }
@@ -184,7 +204,7 @@
     fillFormatSelect($('#filter-format'), 'All formats');
     fillFormatSelect($('#random-format'), 'Any format');
     fillFormatSelect($('#add-format'));
-    fillFormatSelect($('#list-format'));
+    fillFormatSelect($('#import-format'));
     fillFormatSelect($('#manual-form').elements.format);
     fillFormatSelect($('#edit-form').elements.format);
   }
@@ -400,7 +420,7 @@
     }
     $('#filter-format-field').hidden = wishlistMode;
     $('#view-switch').hidden = wishlistMode;
-    $('#list-import-tools').hidden = !wishlistMode && !records.length; // the empty shelf has its own button
+    $('#import-btn').hidden = !wishlistMode && !records.length; // the empty shelf has its own Import button
     renderLookup();
     $('#collection-empty').hidden = wishlistMode || all.length > 0;
     $('#wishlist-empty').hidden = !wishlistMode || all.length > 0;
@@ -561,6 +581,8 @@
   // so a search per keystroke would just queue up.
   const SEARCH_DELAY_MS = 450;
   let results = [];
+  // The artist a search named, shown as a row above the albums: { id, name } or null.
+  let resultArtist = null;
   let searchTimer = null;
   let searchController = null;
   let lastQuery = '';
@@ -584,6 +606,7 @@
       searchController = null;
       lastQuery = '';
       results = [];
+      resultArtist = null;
       renderResults();
       setStatus('#search-status', '');
       return;
@@ -601,9 +624,10 @@
     // The previous results stay up until the new ones arrive, so the list doesn't flicker while typing.
     setStatus('#search-status', mb.looksLikeBarcode(text) ? 'Looking up that barcode…' : 'Searching…', 'busy');
     try {
-      const { results: found, hiddenNonVinyl, hiddenSmall } = await mb.search(text, controller.signal, { small: smallRecords() });
+      const { results: found, artist, hiddenNonVinyl, hiddenSmall } = await mb.search(text, controller.signal, { small: smallRecords() });
       if (controller !== searchController) return;
       results = found;
+      resultArtist = artist;
       let note = '';
       if (!found.length && hiddenSmall) note = 'That barcode is for a 45 or a 10" record. Turn on "Include 45s and 10" records" to add it.';
       else if (!found.length && hiddenNonVinyl) note = 'That barcode is for a CD or cassette, not a vinyl record.';
@@ -617,8 +641,25 @@
     }
   }
 
+  // Someone who types only "radiohead" or "low" most likely wants that artist's records, which the
+  // album list alone ranks poorly. One tap opens the artist's discography, which lists every album.
+  function artistRow(artist) {
+    return h('li', { class: 'artist-row' },
+      h('button', {
+        type: 'button',
+        class: 'artist-link',
+        onclick: () => {
+          location.hash = 'discography';
+          loadDiscography(artist);
+        },
+      },
+      h('span', { class: 'artist-name' }, artist.name),
+      h('span', { class: 'artist-kind' }, ' · Artist · '),
+      h('span', { class: 'artist-action' }, 'See all albums')));
+  }
+
   function renderResults() {
-    $('#search-results').replaceChildren(...results.map((result) => h('li', { class: 'result' },
+    $('#search-results').replaceChildren(...(resultArtist ? [artistRow(resultArtist)] : []), ...results.map((result) => h('li', { class: 'result' },
       cover(result, 'sm'),
       h('div', { class: 'result-text' },
         h('span', { class: 'record-title' }, result.title),
@@ -757,9 +798,19 @@
 
   // ---------- Discography ----------
 
-  let disco = null; // { artist: { id, name }, groups, total, truncated, fetchedAt }
+  // { artist: { id, name }, groups, total, truncated, vinylComplete, allGroups, fetchedAt, loading }.
+  // loading is true until every release has been checked for vinyl.
+  let disco = null;
   let discoToken = 0;
+  let discoLoad = null; // stops the requests under way for the artist on screen
   let currentMissing = [];
+
+  // Picking another artist, or searching for one, stops the requests for the last one.
+  function nextDiscoToken() {
+    if (discoLoad) discoLoad.abort();
+    discoLoad = null;
+    return ++discoToken;
+  }
 
   function renderDiscoArtists() {
     const select = $('#disco-artist');
@@ -796,7 +847,7 @@
       return;
     }
 
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
     $('#disco-panel').hidden = true;
     setStatus('#artist-status', `Looking up ${name} on MusicBrainz…`, 'busy');
@@ -838,7 +889,7 @@
     event.preventDefault();
     const query = event.target.elements.q.value.trim();
     if (!query) return;
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
     setStatus('#artist-status', 'Searching MusicBrainz…', 'busy');
     try {
@@ -851,34 +902,97 @@
     }
   }
 
+  function discoStatus(doing, { loaded, total }) {
+    setStatus('#artist-status', total > 100 ? `${doing}… ${loaded} of ${total}` : `${doing}…`, 'busy');
+  }
+
+  function showDiscography(data, artist, loading) {
+    disco = { ...data, artist: { id: artist.id, name: artist.name }, loading };
+    renderDiscography();
+    $('#disco-panel').hidden = false;
+    $('#disco-panel').setAttribute('aria-busy', String(loading || Boolean(discoLoad)));
+  }
+
+  // Requests for the artist on screen are under way. The panel says so, and picking another artist
+  // or tapping Refresh stops them.
+  function startDiscoLoad() {
+    discoLoad = new AbortController();
+    $('#disco-panel').setAttribute('aria-busy', 'true');
+    return discoLoad.signal;
+  }
+
+  // What came in stays on screen. Refresh tries again.
+  function discoLoadFailed(e) {
+    discoLoad = null;
+    setStatus('#artist-status', e.message, 'error');
+    $('#disco-panel').setAttribute('aria-busy', 'false');
+  }
+
+  /*
+   * A saved copy shows at once. Once it's a week old, or on Refresh, a new copy loads behind it and
+   * takes its place when complete. Without one, the studio albums show after the first request and
+   * the rest fills in as each page of releases arrives, with no "Vinyl not confirmed" until the end.
+   */
   async function loadDiscography(artist, refresh) {
-    const token = ++discoToken;
+    const token = nextDiscoToken();
     $('#artist-results').replaceChildren();
-    let data = refresh ? null : store.getDiscography(artist.id);
-    if (!data) {
-      $('#disco-panel').hidden = true;
-      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
-      try {
-        const fetched = await mb.getDiscography(artist.id, ({ step, loaded, total }) => {
-          if (token !== discoToken) return;
-          const doing = {
-            releases: `Loading the discography for ${artist.name}`,
-            vinyl: 'Checking which releases came out on vinyl',
-            deluxe: 'Looking for deluxe editions',
-          }[step];
-          setStatus('#artist-status', total > 100 ? `${doing}… ${loaded} of ${total}` : `${doing}…`, 'busy');
-        });
-        data = store.saveDiscography(artist.id, { name: artist.name, ...fetched });
-      } catch (e) {
-        if (token === discoToken) setStatus('#artist-status', e.message, 'error');
+    const saved = store.getDiscography(artist.id);
+    if (saved) {
+      setStatus('#artist-status', '');
+      showDiscography(saved, artist, false);
+      if (!refresh && !store.discographyStale(saved)) {
+        loadAllGroups();
         return;
       }
     }
+    const signal = startDiscoLoad();
+    const update = (progress) => {
+      if (token !== discoToken) return;
+      if (saved) {
+        discoStatus('Checking MusicBrainz for changes', progress);
+        return;
+      }
+      showDiscography({ name: artist.name, ...progress.discography, fetchedAt: Date.now() }, artist, true);
+      discoStatus(progress.step === 'groups' ? 'Loading the rest of the discography' : 'Checking which releases came out on vinyl', progress);
+    };
+    if (saved) setStatus('#artist-status', 'Checking MusicBrainz for changes…', 'busy');
+    else {
+      $('#disco-panel').hidden = true;
+      setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
+    }
+    let data;
+    try {
+      data = store.saveDiscography(artist.id, { name: artist.name, ...(await mb.getDiscography(artist.id, update, { signal })) });
+    } catch (e) {
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
+    }
     if (token !== discoToken) return;
+    discoLoad = null;
     setStatus('#artist-status', '');
-    disco = { ...data, artist: { id: artist.id, name: artist.name } };
-    renderDiscography();
-    $('#disco-panel').hidden = false;
+    showDiscography(data, artist, false);
+    loadAllGroups();
+  }
+
+  // With Vinyl only off, the list also shows albums, EPs and singles that have no official release,
+  // mostly bootlegs. They're fetched the first time they're needed and kept with the discography.
+  async function loadAllGroups() {
+    if (!disco || disco.loading || disco.allGroups || store.getPref('vinylOnly', true) || discoLoad) return;
+    const token = discoToken;
+    const { artist, loading, ...saved } = disco;
+    const signal = startDiscoLoad();
+    setStatus('#artist-status', 'Loading the rest of the discography…', 'busy');
+    let whole;
+    try {
+      whole = await mb.addAllReleaseGroups(saved, artist.id, (progress) => token === discoToken && discoStatus('Loading the rest of the discography', progress), { signal });
+    } catch (e) {
+      if (token === discoToken && e.name !== 'AbortError') discoLoadFailed(e);
+      return;
+    }
+    if (token !== discoToken) return;
+    discoLoad = null;
+    setStatus('#artist-status', '');
+    showDiscography(store.saveDiscography(artist.id, whole), artist, false);
   }
 
   function enabledCategories() {
@@ -903,7 +1017,8 @@
     // MusicBrainz, or a 45 or 10" one when those are turned on. Studio albums are the exception: they
     // show even without one, marked "Vinyl not confirmed", because MusicBrainz is often missing the
     // vinyl pressings of albums that have them. Deluxe editions still need one (many are digital only).
-    // A release you've confirmed, or own on vinyl, counts as having one.
+    // A release you've confirmed, or own on vinyl, counts as having one. Until every release has
+    // been checked, no line says "Vinyl not confirmed".
     const small = smallRecords();
     const listedOnVinyl = (item) => item.vinyl || (small && item.small);
     const onVinyl = (item) => listedOnVinyl(item) || store.isVinylConfirmed(item.key);
@@ -913,7 +1028,7 @@
 
     $('#disco-filters').replaceChildren(
       h('label', { class: 'toggle' },
-        h('input', { type: 'checkbox', checked: vinylOnly, onchange: (e) => { store.setPref('vinylOnly', e.target.checked); renderDiscography(); } }),
+        h('input', { type: 'checkbox', checked: vinylOnly, onchange: (e) => { store.setPref('vinylOnly', e.target.checked); renderDiscography(); loadAllGroups(); } }),
         'Vinyl only'),
       h('label', { class: 'toggle' },
         h('input', { type: 'checkbox', checked: small, onchange: (e) => setSmallRecords(e.target.checked) }),
@@ -936,7 +1051,8 @@
 
     let progress = `You have ${owned.length} of ${visible.length}`;
     if (!visible.length) {
-      if (!disco.groups.length) progress = 'MusicBrainz lists no releases for this artist yet.';
+      if (disco.loading) progress = 'Loading…';
+      else if (!disco.groups.length) progress = 'MusicBrainz lists no releases for this artist yet.';
       else if (vinylOnly && !eligible.length) progress = 'MusicBrainz lists no vinyl releases for this artist. Turn off Vinyl only to see everything.';
       else progress = 'Nothing of these types. Turn on another type below.';
     }
@@ -944,9 +1060,9 @@
     $('#disco-progress-text').textContent = progress;
     $('#disco-bar').style.width = visible.length ? `${(owned.length / visible.length) * 100}%` : '0';
     $('#disco-updated').textContent = meta(
-      `Updated ${ago(disco.fetchedAt)}`,
+      !disco.loading && `Updated ${ago(disco.fetchedAt)}`,
       disco.truncated && `Showing the first ${disco.groups.length} of ${disco.total} releases`,
-      disco.vinylComplete === false && 'This artist has a huge number of vinyl releases, so a few may be missed');
+      disco.vinylComplete === false && 'This artist has a huge number of releases, so a few may be missed');
 
     const itemCover = (item) => cover({ releaseGroupId: item.group.id, artist: disco.artist.name, title: item.title }, 'sm');
 
@@ -960,7 +1076,7 @@
         h('div', { class: 'result-text' },
           h('span', { class: 'record-title' }, item.title),
           h('span', { class: 'record-meta' }, meta(mb.yearOf(item.date), typeLabel(item.group))),
-          listedOnVinyl(item) ? null : vinylNote(item.key, item.title, item.small ? 'Only on 45 or 10"' : 'Vinyl not confirmed')),
+          listedOnVinyl(item) || disco.loading ? null : vinylNote(item.key, item.title, item.small ? 'Only on 45 or 10"' : 'Vinyl not confirmed')),
         h('div', { class: 'actions' },
           wish
             ? h('button', { type: 'button', class: 'small wished', onclick: () => unwishWithUndo(wish) }, 'On wishlist')
@@ -995,17 +1111,21 @@
     };
   }
 
-  async function copyMissing() {
+  async function copyText(text, done) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(done);
+    } catch (e) {
+      toast("Couldn't copy. Your browser blocked the clipboard.");
+    }
+  }
+
+  function copyMissing() {
     const lines = currentMissing.map((item) => {
       const year = mb.yearOf(item.date);
       return `${disco.artist.name} - ${item.title}${year ? ` (${year})` : ''}`;
     });
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
-      toast(`Copied ${plural(lines.length, 'title')}`);
-    } catch (e) {
-      toast("Couldn't copy. Your browser blocked the clipboard.");
-    }
+    return copyText(lines.join('\n'), `Copied ${plural(lines.length, 'title')}`);
   }
 
   // ---------- Backup ----------
@@ -1019,87 +1139,328 @@
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
-  async function importBackup(event) {
-    const file = event.target.files[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      const { added, skipped, wishes } = store.importJSON(await file.text());
-      let message = `Imported ${plural(added, 'record')}`;
-      if (wishes) message += ` and ${wishes} for your wishlist`;
-      if (skipped) message += `. Skipped ${skipped} already here or incomplete.`;
-      toast(message);
-    } catch (e) {
-      toast(e.message);
-    }
+  // ---------- Sync between devices ----------
+
+  // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
+  // once js/sync-config.js is filled in, and the header button stays hidden until then.
+  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService });
+
+  const SYNC_PROBLEMS = {
+    notAllowed: () => "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.",
+    quotaReached: () => "This site has used up today's free Firebase reads. Sync works again tomorrow.",
+    tooBig: () => 'Your collection is too big to sync. The limit is about 14,000 records.',
+    offline: () => "Couldn't reach the sync service. Check your connection and try again.",
+    domainNotAuthorized: () => "Firebase doesn't allow sign-in from this site's address yet. Add it to the authorized domains in the Firebase console.",
+    googleSignInOff: () => "Google sign-in isn't turned on in the Firebase console yet.",
+    popupBlocked: () => 'Your browser blocked the sign-in window. Allow pop-ups for this site and try again.',
+    failed: (message) => `Sync didn't work. ${message}`.trim(),
+  };
+
+  const SYNC_BUSY = {
+    starting: 'starting',
+    signingIn: 'signing in',
+    checking: 'checking access',
+    syncing: 'syncing',
+    requesting: 'asking for access',
+    withdrawing: 'taking back the request',
+    deciding: 'saving',
+  };
+
+  function syncedWhen(time) {
+    if (!time) return 'not synced on this device yet';
+    const minutes = Math.floor((Date.now() - Date.parse(time)) / 60000);
+    if (minutes < 1) return 'synced just now';
+    if (minutes < 60) return `synced ${plural(minutes, 'minute')} ago`;
+    if (minutes < 24 * 60) return `synced ${plural(Math.floor(minutes / 60), 'hour')} ago`;
+    return `synced on ${new Date(time).toLocaleDateString()}`;
   }
 
-  // ---------- Importing a list ----------
+  const sentence = (words) => `${words[0].toUpperCase()}${words.slice(1)}.`;
+  const waitingPeople = (people) => people.filter((person) => person.status === 'pending');
 
-  // Records to add from the list in the import dialog, minus albums already in the collection.
-  let listItems = [];
+  // What the header button shows without opening: the tone of its dot, the words of its name, and for
+  // the owner the number of requests waiting.
+  function syncGlance({ phase, access, people, problem, syncedAt }) {
+    if (phase === 'unavailable') return { tone: 'problem', words: "couldn't start" };
+    if (SYNC_BUSY[phase]) return { tone: 'busy', words: SYNC_BUSY[phase] };
+    if (problem) return { tone: 'problem', words: 'something went wrong' };
+    if (phase === 'signedOut') return { tone: 'off', words: 'signed out' };
+    if (access === 'none') return { tone: 'off', words: 'no access yet' };
+    if (access === 'pending') return { tone: 'waiting', words: 'waiting for approval' };
+    if (access === 'denied') return { tone: 'off', words: 'no access' };
+    const count = waitingPeople(people).length;
+    const words = syncedWhen(syncedAt);
+    return { tone: 'ok', words: count ? `${words}, ${plural(count, 'request')} waiting` : words, count };
+  }
 
-  function openListImport() {
-    $('#list-form').reset();
-    $('#list-format').value = $('#add-format').value;
-    previewList();
-    const dialog = $('#list-dialog');
+  // The id of the person whose denial or removal waits for a second tap. Neither can be undone in the
+  // app, since the rules don't let a denied person back in.
+  let confirmingSync = null;
+
+  function personRow(person) {
+    const who = h('div', { class: 'sync-person-who' }, h('strong', {}, person.name || person.email), person.name ? h('span', { class: 'muted small' }, person.email) : null);
+    const busy = sync.state.phase !== 'idle';
+    const decide = (status) => {
+      confirmingSync = null;
+      sync.decide(person.id, status);
+    };
+    const confirm = (id) => {
+      confirmingSync = id;
+      renderSync();
+    };
+    const name = person.name || person.email;
+    const removing = person.status === 'approved';
+    let actions;
+    if (confirmingSync === person.id) {
+      actions = [
+        h('span', { class: 'small' }, removing ? `Remove ${name}? They can't ask again.` : `Deny ${name}? They can't ask again.`),
+        h('button', { type: 'button', class: 'small danger', 'data-confirm': person.id, disabled: busy, onclick: () => decide('denied') }, removing ? 'Remove access' : 'Deny'),
+        h('button', { type: 'button', class: 'small link', onclick: () => confirm(null) }, 'Cancel'),
+      ];
+    } else if (person.status === 'pending') {
+      actions = [
+        h('button', { type: 'button', class: 'small primary', 'data-approve': person.id, disabled: busy, onclick: () => decide('approved') }, 'Approve'),
+        h('button', { type: 'button', class: 'small', 'data-deny': person.id, disabled: busy, onclick: () => confirm(person.id) }, 'Deny'),
+      ];
+    } else {
+      actions = [h('button', { type: 'button', class: 'small link danger', 'data-remove': person.id, disabled: busy, onclick: () => confirm(person.id) }, 'Remove access')];
+    }
+    return h('li', { class: 'sync-person', 'data-person': person.id }, who, h('div', { class: 'sync-person-actions' }, actions));
+  }
+
+  // The owner's list: requests waiting, then the people who sync now.
+  function peopleSections(people) {
+    const byTime = (a, b) => compare(a.requestedAt || '', b.requestedAt || '');
+    const waiting = waitingPeople(people).sort(byTime);
+    const approved = people.filter((person) => person.status === 'approved').sort((a, b) => compare(a.name || a.email, b.name || b.email));
+    return h('div', { id: 'sync-people' },
+      h('h3', {}, 'Requests'),
+      waiting.length ? h('ul', { class: 'sync-people', id: 'sync-requests' }, waiting.map(personRow)) : h('p', { class: 'muted small' }, 'No requests waiting.'),
+      h('h3', {}, 'People who sync'),
+      approved.length ? h('ul', { class: 'sync-people', id: 'sync-approved' }, approved.map(personRow)) : h('p', { class: 'muted small' }, 'Nobody else syncs yet.'));
+  }
+
+  // The site owner needs their own id once, for the rules. Collapsed, since nobody else needs it.
+  const setupHelp = (user) => h('details', { class: 'small sync-account' },
+    h('summary', {}, 'Setting up this site?'),
+    h('p', { class: 'muted' }, "If you run this site's Firebase project, put this account id in its access rules. Anyone else can skip this."),
+    h('code', { id: 'sync-account-id' }, user.id), ' ',
+    h('button', { type: 'button', class: 'link small', onclick: () => copyText(user.id, 'Copied the account id') }, 'Copy'));
+
+  // What the dialog shows a signed-in account, by its access.
+  const SYNC_VIEWS = {
+    unknown: ({ phase, user }) => [phase === 'checking' ? h('p', { class: 'muted small' }, 'Checking your access…') : null, setupHelp(user)],
+    none: ({ user }, busy) => [
+      h('p', {}, "This site's owner decides who can sync. Ask, and you'll sync once they approve."),
+      h('button', { type: 'button', class: 'primary', id: 'sync-request', disabled: busy, onclick: () => sync.requestAccess() }, 'Request access'),
+      h('p', { class: 'muted small', id: 'sync-privacy' }, "Asking shares your name and email with the site's owner, and your collection is kept in their Firebase project."),
+      setupHelp(user),
+    ],
+    pending: (state, busy) => [
+      h('p', { id: 'sync-status' }, "You asked for access. You're waiting for the site's owner to approve it."),
+      h('div', { class: 'sync-actions' },
+        h('button', { type: 'button', id: 'sync-check', disabled: busy, onclick: () => sync.syncNow() }, 'Check again'),
+        h('button', { type: 'button', class: 'link', id: 'sync-withdraw', disabled: busy, onclick: () => sync.withdrawAccess() }, 'Withdraw request')),
+    ],
+    denied: () => [h('p', { id: 'sync-status' }, "You don't have access to sync on this site. The records on this device stay here.")],
+    approved: (state, busy) => syncControls(state, busy),
+    owner: (state, busy) => [...syncControls(state, busy), peopleSections(state.people)],
+  };
+
+  function syncControls({ phase, syncedAt }, busy) {
+    return [
+      h('p', { id: 'sync-status' }, phase === 'syncing' ? 'Syncing…' : sentence(syncedWhen(syncedAt))),
+      h('div', { class: 'sync-actions' }, h('button', { type: 'button', class: 'primary', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now')),
+    ];
+  }
+
+  function syncBody(state) {
+    const { phase, user, access, problem } = state;
+    const busy = Boolean(SYNC_BUSY[phase]);
+    const parts = [];
+    if (phase === 'starting') {
+      parts.push(h('p', { class: 'muted small' }, 'Sync is starting…'));
+    } else if (phase === 'unavailable') {
+      parts.push(h('p', { class: 'muted small' }, "Sync couldn't start. Check your connection and reload the page."));
+    } else if (!user) {
+      parts.push(
+        h('p', {}, 'Sign in with Google on each device to keep one collection on all of them.'),
+        h('button', { type: 'button', class: 'primary', id: 'sync-sign-in', disabled: busy, onclick: () => sync.signIn() }, phase === 'signingIn' ? 'Signing in…' : 'Sign in with Google'));
+    } else {
+      parts.push(h('p', { class: 'muted small sync-who' }, `Signed in as ${user.email || 'your Google account'}.`), ...SYNC_VIEWS[access || 'unknown'](state, busy));
+    }
+    if (problem) parts.push(h('p', { class: 'small danger', id: 'sync-problem', role: 'alert' }, SYNC_PROBLEMS[problem.kind](problem.message)));
+    // replaceChildren writes a null out as text, so leave out the views' empty slots the way h() does.
+    return parts.filter((part) => part != null);
+  }
+
+  // The header button and, when it's open, the dialog. Focus stays on the control it was on, since
+  // every change draws the dialog's body again.
+  function renderSync() {
+    const state = sync.state;
+    const button = $('#sync-button');
+    const dialog = $('#sync-dialog');
+    button.hidden = state.phase === 'off';
+    if (button.hidden) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    const glance = syncGlance(state);
+    button.dataset.tone = glance.tone;
+    button.setAttribute('aria-label', `Sync: ${glance.words}`);
+    button.title = sentence(`Sync: ${glance.words}`);
+    $('#sync-count').hidden = !glance.count;
+    $('#sync-count').textContent = glance.count || '';
+    const focused = dialog.contains(document.activeElement) && document.activeElement.id;
+    $('#sync-body').replaceChildren(...syncBody(state));
+    $('#sync-footer').replaceChildren(state.user ? h('button', { type: 'button', class: 'link', id: 'sync-sign-out', disabled: Boolean(SYNC_BUSY[state.phase]), onclick: () => sync.signOut() }, 'Sign out') : '');
+    if (focused && document.getElementById(focused)) document.getElementById(focused).focus();
+  }
+
+  function openSync() {
+    confirmingSync = null;
+    renderSync();
+    $('#sync-dialog').showModal();
+  }
+
+  // ---------- Importing ----------
+
+  // What the import dialog would add: a backup as RC.store.readImport reads it, or a list or spreadsheet
+  // with the albums already in the collection taken out. Null when there's nothing to add.
+  let importing = null;
+
+  // The file being imported, shown by name in place of the paste box: { name, content } with what
+  // RC.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
+  let chosenFile = null;
+
+  function chooseImportSource(file) {
+    chosenFile = file;
+    $('#import-paste').hidden = Boolean(file);
+    $('#import-chosen').hidden = !file;
+    $('#import-file-name').textContent = file ? file.name : '';
+    previewImport();
+  }
+
+  function openImport() {
+    $('#import-form').reset();
+    $('#import-format').value = $('#add-format').value;
+    chooseImportSource(null);
+    const dialog = $('#import-dialog');
     dialog.returnValue = '';
     dialog.showModal();
   }
 
-  // Says what the import will do, as the list is typed, pasted or loaded from a file.
-  function previewList() {
-    const { items, unreadable, merged } = S.parseRecordList($('#list-form').elements.list.value);
-    listItems = items.filter((item) => !store.findCopy(item));
-    const owned = items.length - listItems.length;
-    const notes = [];
-    if (owned) notes.push(`${plural(owned, 'record')} already in your collection ${owned === 1 ? 'is' : 'are'} skipped.`);
-    if (merged) notes.push(`${plural(merged, 'line')} named an album already on the list, so ${merged === 1 ? 'it was' : 'they were'} combined into one record with a note like "2 copies".`);
-    const summary = [];
-    if (listItems.length) summary.push(h('p', { class: 'list-count' }, `${plural(listItems.length, 'record')} to add.`));
-    if (notes.length) summary.push(h('p', { class: 'muted small' }, notes.join(' ')));
-    if (unreadable.length) {
-      const shown = unreadable.slice(0, 5);
-      summary.push(h('div', { class: 'list-problem' },
-        h('p', {}, `${plural(unreadable.length, 'line')} couldn't be read, so ${unreadable.length === 1 ? "it's" : "they're"} left out. Each line needs an artist, a dash with a space on each side, then the title.`),
-        h('ul', {}, shown.map((line) => h('li', {}, line))),
-        unreadable.length > shown.length ? h('p', { class: 'small' }, `and ${unreadable.length - shown.length} more`) : null));
-    }
-    $('#list-summary').replaceChildren(...summary);
-    $('#list-submit').disabled = !listItems.length;
-    $('#list-submit').textContent = listItems.length ? `Add ${plural(listItems.length, 'record')}` : 'Add records';
+  const andList = (words) => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
+  const columnNames = (names) => `${andList(names)} ${names.length === 1 ? 'column' : 'columns'}`;
+  const importProblem = (...children) => h('div', { class: 'import-problem' }, ...children);
+
+  function showImport(next, summary) {
+    importing = next;
+    $('#import-format-field').hidden = Boolean(next) && next.kind === 'backup'; // a backup's records keep their own formats
+    $('#import-summary').replaceChildren(...summary);
+    $('#import-submit').disabled = !next;
+    $('#import-submit').textContent = !next ? 'Add records' : next.kind === 'backup' ? 'Import backup' : `Add ${plural(next.items.length, 'record')}`;
   }
 
-  async function loadListFile(event) {
+  // Says what the import will do, as text is typed, pasted or loaded from a file.
+  function previewImport() {
+    if (chosenFile && chosenFile.problem) {
+      showImport(null, [importProblem(h('p', {}, chosenFile.problem))]);
+      return;
+    }
+    let read;
+    try {
+      read = S.readImport(chosenFile ? chosenFile.content : $('#import-form').elements.text.value);
+    } catch (e) {
+      showImport(null, [importProblem(h('p', {}, e.message))]);
+      return;
+    }
+    if (read.kind === 'backup') {
+      const wishes = read.wishlist.length ? ` and ${read.wishlist.length} on your wishlist` : '';
+      showImport(read.records.length || read.wishlist.length ? read : null, [
+        h('p', { class: 'import-count' }, `A Record Catalog backup with ${plural(read.records.length, 'record')}${wishes}.`),
+        h('p', { class: 'muted small' }, 'Albums you already have are skipped.'),
+      ]);
+      return;
+    }
+
+    const unit = read.kind === 'table' ? 'row' : 'line';
+    const items = store.notInCollection(read.items);
+    const owned = read.items.length - items.length;
+    const notes = [];
+    if (read.kind === 'table') {
+      const from = read.app ? ` of this ${read.app} export` : '';
+      notes.push(`Read the ${columnNames(read.columns)}${from}${read.ignored.length ? ` and left out the ${columnNames(read.ignored)}` : ''}.`);
+    }
+    if (owned) notes.push(`${plural(owned, 'record')} already in your collection ${owned === 1 ? 'is' : 'are'} skipped.`);
+    if (read.merged) notes.push(`${plural(read.merged, unit)} named an album already on the list, so ${read.merged === 1 ? 'it was' : 'they were'} combined into one record with a note like "2 copies".`);
+    const summary = [];
+    if (items.length) summary.push(h('p', { class: 'import-count' }, `${plural(items.length, 'record')} to add.`));
+    if (notes.length) summary.push(h('p', { class: 'muted small' }, notes.join(' ')));
+    const rowList = (className, message, rows) => h('div', { class: className },
+      h('p', {}, message),
+      h('ul', {}, rows.slice(0, 5).map((row) => h('li', {}, row))),
+      rows.length > 5 ? h('p', { class: 'small' }, `and ${rows.length - 5} more`) : null);
+    const leftOut = (n) => `so ${n === 1 ? "it's" : "they're"} left out.`;
+    if (read.kind === 'table' && read.notVinyl.length) {
+      const n = read.notVinyl.length;
+      summary.push(rowList('import-note', `${plural(n, 'row')} ${n === 1 ? 'is a CD or cassette' : 'are CDs or cassettes'}, ${leftOut(n)}`, read.notVinyl));
+    }
+    if (read.unreadable.length) {
+      const n = read.unreadable.length;
+      const needs = read.kind === 'table' ? 'Each row needs an artist and a title.' : 'Each line needs an artist, a dash with a space on each side, then the title.';
+      summary.push(rowList('import-problem', `${plural(n, unit)} couldn't be read, ${leftOut(n)} ${needs}`, read.unreadable));
+    }
+    showImport(items.length ? { ...read, items } : null, summary);
+  }
+
+  async function loadImportFile(event) {
     const file = event.target.files[0];
     event.target.value = '';
     if (!file) return;
+    let source;
     try {
-      $('#list-form').elements.list.value = await file.text();
+      const bytes = await file.arrayBuffer().catch(() => {
+        throw new Error("Couldn't read that file.");
+      });
+      source = { name: file.name, content: await S.fileContent(new Uint8Array(bytes)) };
     } catch (e) {
-      toast("Couldn't read that file.");
-      return;
+      source = { name: file.name, problem: e.message };
     }
-    previewList();
+    chooseImportSource(source);
   }
 
-  function onListDialogClosed() {
-    if ($('#list-dialog').returnValue === 'import') importList();
+  function pasteInstead() {
+    chooseImportSource(null);
+    $('#import-form').elements.text.focus();
+  }
+
+  function onImportDialogClosed() {
+    if ($('#import-dialog').returnValue !== 'import' || !importing) return;
+    if (importing.kind === 'backup') importBackup(importing);
+    else importRecords(importing.items);
+  }
+
+  function importBackup(backup) {
+    const { added, skipped, wishes } = store.importBackup(backup);
+    let message = `Imported ${plural(added, 'record')}`;
+    if (wishes) message += ` and ${wishes} for your wishlist`;
+    if (skipped) message += `. Skipped ${skipped} already here or incomplete.`;
+    toast(message);
   }
 
   // Adds the records straight away, then looks each one up on MusicBrainz in the background.
-  function importList() {
-    const format = $('#list-format').value;
-    const inputs = listItems.map((item) => ({
-      artist: item.artist, title: item.title, notes: item.notes, format: item.format || format, pendingLookup: true,
-    }));
-    const wishes = inputs.map((input) => store.findWish(input)).filter(Boolean);
+  function importRecords(items) {
+    const format = $('#import-format').value;
+    const inputs = items.map((item) => ({ ...item, format: item.format || format, pendingLookup: true }));
+    const wishesBefore = store.wishlist();
     const { added } = store.addMany(inputs);
     if (!added.length) {
       toast('Those records are already in your collection.');
       return;
     }
+    const kept = new Set(store.wishlist().map((wish) => wish.id));
+    const wishes = wishesBefore.filter((wish) => !kept.has(wish.id)); // ticked off by this import, put back by Undo
     // The lookups may have started already, from the change to the collection, and listed some.
     for (const record of added) if (!lookupSession.ids.includes(record.id)) lookupSession.ids.push(record.id);
     saveLookupSession();
@@ -1290,15 +1651,14 @@
     store.setPref('sort', e.target.value);
     renderCollection();
   });
-  for (const button of document.querySelectorAll('.list-import-btn')) button.addEventListener('click', openListImport);
-  $('#list-form').elements.list.addEventListener('input', previewList);
-  $('#list-file-btn').addEventListener('click', () => $('#list-file').click());
-  $('#list-file').addEventListener('change', loadListFile);
-  $('#list-cancel').addEventListener('click', () => $('#list-dialog').close('cancel'));
-  $('#list-dialog').addEventListener('close', onListDialogClosed);
+  for (const button of document.querySelectorAll('.import-open')) button.addEventListener('click', openImport);
+  $('#import-form').elements.text.addEventListener('input', previewImport);
+  $('#import-file-btn').addEventListener('click', () => $('#import-file').click());
+  $('#import-file').addEventListener('change', loadImportFile);
+  $('#import-paste-btn').addEventListener('click', pasteInstead);
+  $('#import-cancel').addEventListener('click', () => $('#import-dialog').close('cancel'));
+  $('#import-dialog').addEventListener('close', onImportDialogClosed);
   $('#export-btn').addEventListener('click', exportBackup);
-  $('#import-btn').addEventListener('click', () => $('#import-file').click());
-  $('#import-file').addEventListener('change', importBackup);
 
   $('#edit-dialog').addEventListener('close', onEditorClosed);
   $('#edit-cancel').addEventListener('click', () => $('#edit-dialog').close('cancel'));
@@ -1344,7 +1704,11 @@
     if (!lookup.running && !lookup.error && store.all().some((record) => record.pendingLookup)) runLookups();
   });
 
+  $('#sync-button').addEventListener('click', openSync);
+  sync.onChange(renderSync);
+  window.addEventListener('storage', () => store.reload());
   window.addEventListener('hashchange', showView);
+  renderSync();
   renderCollection();
   showView();
   if (store.all().some((record) => record.pendingLookup)) runLookups();

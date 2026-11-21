@@ -1,22 +1,25 @@
 /*
  * Record storage and matching helpers.
- * Loaded as a plain script in the browser (window.RC.store) and with require() in Node tests.
+ * Loaded as a plain script in the browser (window.RC.store), after js/xlsx.js, and with require() in Node tests.
  */
 (function (root, factory) {
-  const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
+  const node = typeof module === 'object' && module.exports;
+  const api = factory(node ? require('./xlsx.js') : root.RC.xlsx);
+  if (node) module.exports = api;
   else (root.RC = root.RC || {}).store = api;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (xlsx) {
   'use strict';
 
   const KEYS = {
     records: 'recordcatalog.records.v1',
     wishlist: 'recordcatalog.wishlist.v1',
-    confirmed: 'recordcatalog.confirmed.v1', // releases you've confirmed came out on vinyl
-    discographies: 'recordcatalog.discographies.v5', // v5: LP and 45/10" pressings tracked separately
+    confirmed: 'recordcatalog.confirmed.v2', // releases you've confirmed came out on vinyl, and when (v2: with times)
+    deleted: 'recordcatalog.deleted.v1', // what you deleted and when, so syncing another device's copy doesn't bring it back
+    discographies: 'recordcatalog.discographies.v6', // v6: vinyl from browsing official releases, not search
     prefs: 'recordcatalog.prefs.v1',
   };
-  const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4'];
+  const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4', 'recordcatalog.discographies.v5'];
+  const OLD_CONFIRMED = 'recordcatalog.confirmed.v1';
 
   // Vinyl only. Records saved earlier as CD or Cassette keep that format until you change it.
   const FORMATS = ['LP', 'Double LP', 'EP', '45', '10"', '12" single', 'Box set', 'Other'];
@@ -40,7 +43,14 @@
   ];
 
   const DAY = 24 * 60 * 60 * 1000;
-  const DISCOGRAPHY_MAX_AGE = 7 * DAY;
+  // A saved discography is refreshed in the background once it's a week old, and shown while that
+  // happens. After four weeks it's deleted, and the artist loads from scratch.
+  const DISCOGRAPHY_FRESH_FOR = 7 * DAY;
+  const DISCOGRAPHY_KEPT_FOR = 28 * DAY;
+
+  const now = () => new Date().toISOString();
+  // The time of a change nobody wrote down, like a confirmation saved before they had times. Older than any real change.
+  const UNKNOWN_TIME = new Date(0).toISOString();
 
   // ---------- Text matching ----------
 
@@ -77,6 +87,9 @@
     return match ? Number(match[1]) : null;
   }
 
+  // A cover's main color, as the app reads it: "rgb(12 34 56)".
+  const COVER_COLOR = /^rgb\(\d{1,3} \d{1,3} \d{1,3}\)$/;
+
   function newId() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -96,10 +109,21 @@
       artistId: input.artistId || null,
       releaseGroupId: input.releaseGroupId || null,
       releaseId: input.releaseId || null,
+      coverColor: COVER_COLOR.test(input.coverColor) ? input.coverColor : null,
       // Imported records wait for a MusicBrainz lookup to fill in covers and years.
       pendingLookup: Boolean(input.pendingLookup),
-      addedAt: input.addedAt || new Date().toISOString(),
+      addedAt: input.addedAt || now(),
+      // When this copy last changed, so two devices can tell which copy of a record is newer.
+      updatedAt: now(),
     };
+  }
+
+  // A record as another copy of the app saved it, in a backup or on another device. It keeps the time
+  // it last changed. Copies saved before records had that time count from when the record was added.
+  function readRecord(input) {
+    const record = cleanRecord(input);
+    record.updatedAt = typeof input.updatedAt === 'string' ? input.updatedAt : record.addedAt;
+    return record;
   }
 
   // ---------- Collection helpers ----------
@@ -154,6 +178,37 @@
     if (DELUXE_WORDS.test(a.title) !== DELUXE_WORDS.test(b.title)) return false;
     if (a.releaseGroupId && b.releaseGroupId) return a.releaseGroupId === b.releaseGroupId;
     return normArtist(a.artist) === normArtist(b.artist) && normTitle(a.title) === normTitle(b.title);
+  }
+
+  // sameAlbum's two ways of matching as keys: by release group, or by artist and title.
+  const editionOf = (record) => (DELUXE_WORDS.test(record.title) ? 'deluxe' : 'original');
+  const groupKey = (record) => `${record.releaseGroupId}|${editionOf(record)}`;
+  const nameKey = (record) => `${normArtist(record.artist)}|${normTitle(record.title)}|${editionOf(record)}`;
+
+  /*
+   * Finds the record for the same album by sameAlbum's rules, working out each record's keys once, so
+   * checking a long import against a big collection doesn't compare every pair.
+   */
+  function albumIndex(records) {
+    const byGroup = new Map();
+    const byName = new Map();
+    const add = (record) => {
+      const group = record.releaseGroupId && groupKey(record);
+      if (group && !byGroup.has(group)) byGroup.set(group, record);
+      const name = nameKey(record);
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(record);
+    };
+    records.forEach(add);
+    return {
+      add,
+      // Two linked records match only by release group, so a linked input matches by name only records typed in by hand.
+      find(input) {
+        const linked = input.releaseGroupId && byGroup.get(groupKey(input));
+        if (linked) return linked;
+        return (byName.get(nameKey(input)) || []).find((record) => !input.releaseGroupId || !record.releaseGroupId) || null;
+      },
+    };
   }
 
   function isDeluxeRecord(record, group) {
@@ -231,57 +286,301 @@
   const FORMAT_ONLY_NOTE = new RegExp(`^\\s*${FORMAT_WORD}(?:(?:\\s*[/,&+]\\s*|\\s+and\\s+|\\s+)${FORMAT_WORD})*\\s*$`, 'i');
 
   /*
-   * Reads a pasted list of records, one per line. Brackets at the end of a title become notes, like
-   * "(Signed)" or "(I have 2)", except deluxe or expanded editions, which stay in the title; "(Single)"
-   * or "(45)" also makes it a 45. Lines naming the same album become one record, since you keep one
-   * copy per album; their notes are combined, plus "2 copies" and so on.
-   * Returns { items: [{ artist, title, notes, format, line }], unreadable: [line], merged }, where
-   * merged counts the lines folded into an earlier one.
+   * One record from an import, or null without an artist and a title. Brackets at the end of a title
+   * become notes, like "(Signed)" or "(I have 2)", except deluxe or expanded editions, which stay in
+   * the title; "(Single)" or "(45)" also makes it a 45 unless a format is given.
    */
-  function parseRecordList(text) {
+  function readEntry({ artist, title, year = null, format = null, notes = [] }) {
+    const name = String(artist || '').trim();
+    let rest = String(title || '').trim();
+    const found = [];
+    let noteFormat = null;
+    let match;
+    while ((match = TRAILING_BRACKETS.exec(rest)) && match.index > 0) {
+      const note = match[1].trim();
+      if (DELUXE_WORDS.test(note)) break;
+      rest = rest.slice(0, match.index).trim();
+      if (note && !FORMAT_ONLY_NOTE.test(note)) found.unshift(note);
+      noteFormat = noteFormat || formatFromNote(note);
+    }
+    if (!name || !rest) return null;
+    return { artist: name, title: rest, year: parseYear(year), format: format || noteFormat, notes: [...found, ...notes.filter(Boolean)] };
+  }
+
+  /*
+   * Entries naming the same album become one record, since you keep one copy per album. Their notes
+   * are combined, plus "2 copies" and so on. Returns { items: [{ artist, title, year, format, notes }],
+   * merged }, where merged counts the entries folded into an earlier one.
+   */
+  function foldRepeats(entries) {
     const byAlbum = new Map();
-    const unreadable = [];
     let merged = 0;
-    for (const raw of String(text || '').split(/\r?\n/)) {
-      const line = raw.replace(LIST_BULLET, '').trim();
-      if (!line) continue;
-      const at = line.search(LIST_SEPARATOR);
-      if (at <= 0) {
-        unreadable.push(raw.trim());
-        continue;
-      }
-      const artist = line.slice(0, at).trim();
-      let title = line.slice(at).replace(LIST_SEPARATOR, '').trim();
-      const notes = [];
-      let format = null;
-      let match;
-      while ((match = TRAILING_BRACKETS.exec(title)) && match.index > 0) {
-        const note = match[1].trim();
-        if (DELUXE_WORDS.test(note)) break;
-        title = title.slice(0, match.index).trim();
-        if (note && !FORMAT_ONLY_NOTE.test(note)) notes.unshift(note);
-        format = format || formatFromNote(note);
-      }
-      if (!title) {
-        unreadable.push(raw.trim());
-        continue;
-      }
-      const key = `${normArtist(artist)}|${normTitle(title)}|${DELUXE_WORDS.test(title) ? 'deluxe' : ''}`;
+    for (const entry of entries) {
+      const key = `${normArtist(entry.artist)}|${normTitle(entry.title)}|${DELUXE_WORDS.test(entry.title) ? 'deluxe' : ''}`;
       const item = byAlbum.get(key);
-      if (item) {
-        merged += 1;
-        item.copies += 1;
-        for (const note of notes) if (!item.notes.includes(note)) item.notes.push(note);
-        item.format = item.format || format;
-      } else {
-        byAlbum.set(key, { artist, title, notes, format, copies: 1, line: raw.trim() });
+      if (!item) {
+        byAlbum.set(key, { ...entry, notes: entry.notes.slice(), copies: 1 });
+        continue;
       }
+      merged += 1;
+      item.copies += 1;
+      for (const note of entry.notes) if (!item.notes.includes(note)) item.notes.push(note);
+      item.format = item.format || entry.format;
+      item.year = item.year || entry.year;
     }
     const items = [...byAlbum.values()].map(({ copies, notes, ...item }) => ({
       ...item,
       notes: [...notes, ...(copies > 1 ? [`${copies} copies`] : [])].join('; '),
     }));
-    return { items, unreadable, merged };
+    return { items, merged };
+  }
+
+  // Reads a pasted list of records, one per line. Returns { items, unreadable: [line], merged }.
+  function parseRecordList(text) {
+    const entries = [];
+    const unreadable = [];
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      const line = raw.replace(LIST_BULLET, '').trim();
+      if (!line) continue;
+      const at = line.search(LIST_SEPARATOR);
+      const entry = at > 0 && readEntry({ artist: line.slice(0, at), title: line.slice(at).replace(LIST_SEPARATOR, '') });
+      if (entry) entries.push(entry);
+      else unreadable.push(raw.trim());
+    }
+    return { ...foldRepeats(entries), unreadable };
+  }
+
+  // What a spreadsheet's format column says, like "2xLP, Album", '7"' or "Vinyl". The first pattern that fits wins.
+  const COLUMN_FORMATS = [
+    ['12" single', /12"\s*single|\bmaxi\b/i],
+    ['Box set', /\bbox\b/i],
+    ['Double LP', /\b(?:2\s*x\s*lp|2lp|double)\b/i],
+    ['45', /\b45\b|7"|\b7 ?inch|\bsingle\b/i],
+    ['10"', /10"|\b10 ?inch/i],
+    ['EP', /\bep\b/i],
+    ['LP', /\blp\b|12"|\b12 ?inch|\bvinyl\b/i],
+  ];
+  const formatFromColumn = (value) => (COLUMN_FORMATS.find(([, pattern]) => pattern.test(value)) || [null])[0];
+
+  const DELIMITERS = [',', '\t', ';'];
+  const yearIn = (text) => (/\b(?:19|20)\d\d\b/.exec(text) || [''])[0];
+  // "Very Good Plus (VG+)" is VG+.
+  const grade = (condition) => (/\(([^()]+)\)\s*$/.exec(condition) || [null, condition])[1];
+
+  /*
+   * How a spreadsheet lays out its columns: when its first row fits, the names that row may give each
+   * field (compared after fold and squash), the fields kept in a record's notes with the name each gets
+   * there, as in "Label: Mercury", and how to clean up an artist's name. The first layout that fits is used.
+   */
+  const LAYOUTS = [
+    {
+      // Discogs' collection export: Catalog#, Artist, Title, Label, Format, Rating, Released, release_id,
+      // CollectionFolder, Date Added, Collection Media Condition, Collection Sleeve Condition, Collection Notes.
+      // Released is when that pressing came out, so MusicBrainz gives the year instead.
+      app: 'Discogs',
+      fits: (names) => names.includes('release id') && names.includes('collectionfolder'),
+      columns: {
+        artist: ['artist'],
+        title: ['title'],
+        format: ['format'],
+        notes: ['collection notes'],
+        label: ['label'],
+        catalog: ['catalog'],
+        pressed: ['released'],
+        media: ['collection media condition'],
+        sleeve: ['collection sleeve condition'],
+      },
+      notes: [['label', 'Label'], ['catalog', 'Catalog number'], ['pressed', 'Pressing year', yearIn], ['media', 'Media condition', grade], ['sleeve', 'Sleeve condition', grade]],
+      // Discogs tells apart artists with the same name by a number, like "Nirvana (2)".
+      artist: (name) => name.replace(/\s\(\d+\)/g, ''),
+    },
+    {
+      app: null,
+      fits: () => true,
+      columns: {
+        artist: ['artist', 'artists', 'artist name', 'album artist', 'band', 'performer'],
+        title: ['title', 'album', 'album title', 'album name', 'record', 'release', 'release title'],
+        year: ['year', 'release year', 'released', 'release date'],
+        format: ['format', 'media', 'medium'],
+        notes: ['notes', 'note', 'comments', 'comment'],
+        label: ['label', 'record label'],
+        catalog: ['catalog', 'catalog number', 'catalog no', 'catalogue', 'catalogue number', 'catalogue no', 'cat no', 'catno'],
+        condition: ['condition', 'media condition', 'record condition'],
+      },
+      notes: [['label', 'Label'], ['catalog', 'Catalog number'], ['condition', 'Condition']],
+      artist: (name) => name,
+    },
+  ];
+
+  // The layout and which column holds each field, or null unless the header row names an artist and a title column.
+  function readHeader(cells) {
+    const names = cells.map((cell) => squash(fold(cell)));
+    const layout = LAYOUTS.find((candidate) => candidate.fits(names));
+    const at = {};
+    names.forEach((name, index) => {
+      const field = Object.keys(layout.columns).find((key) => layout.columns[key].includes(name));
+      if (field && !(field in at)) at[field] = index;
+    });
+    return 'artist' in at && 'title' in at ? { layout, at } : null;
+  }
+
+  // Splits CSV or TSV text into rows of cells. A quoted cell can hold the delimiter, a line break, or "" for a quote.
+  function splitRows(text, delimiter) {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch !== '"') cell += ch;
+        else if (text[i + 1] === '"') cell += text[++i];
+        else quoted = false;
+      } else if (ch === '"' && !cell) {
+        quoted = true;
+      } else if (ch === delimiter) {
+        row.push(cell);
+        cell = '';
+      } else if (ch === '\n') {
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = '';
+      } else {
+        cell += ch;
+      }
+    }
+    row.push(cell);
+    rows.push(row);
+    return rows;
+  }
+
+  // A format column that names a CD or cassette and no vinyl, like "CD, Album". "2xLP + CD" is vinyl.
+  const NOT_VINYL = /\b(?:cd|cdr|sacd|cassette|cass)\b/i;
+  const VINYL = /\b(?:\d*x?lp|vinyl|45|33)\b|\d+"|\d+ ?inch/i;
+  const isNotVinyl = (format) => NOT_VINYL.test(format) && !VINYL.test(format);
+
+  const rowText = (cells) => cells.map((value) => value.trim()).filter(Boolean).join(', ');
+
+  /*
+   * Reads a spreadsheet's rows of cells whose first row names the columns, or returns null when that
+   * row names no artist and title column. Returns { app, columns: [name], ignored: [name], items,
+   * unreadable: [row], notVinyl: [row], merged }, where app names the app that exported it, if known,
+   * columns are the ones read and ignored are the rest.
+   */
+  function readTable(rows) {
+    const [head, ...body] = rows.filter((cells) => cells.some((cell) => cell.trim()));
+    const header = head && readHeader(head);
+    if (!header) return null;
+    const { layout, at } = header;
+    const cell = (cells, field) => (field in at ? (cells[at[field]] || '').trim() : '');
+    const note = (cells, [field, name, clean = (value) => value]) => {
+      const value = clean(cell(cells, field));
+      return value && `${name}: ${value}`;
+    };
+    const entries = [];
+    const unreadable = [];
+    const notVinyl = [];
+    for (const cells of body) {
+      if (isNotVinyl(cell(cells, 'format'))) {
+        notVinyl.push(rowText(cells));
+        continue;
+      }
+      const entry = readEntry({
+        artist: layout.artist(cell(cells, 'artist')),
+        title: cell(cells, 'title'),
+        year: yearIn(cell(cells, 'year')),
+        format: formatFromColumn(cell(cells, 'format')),
+        notes: [cell(cells, 'notes'), ...layout.notes.map((field) => note(cells, field))],
+      });
+      if (entry) entries.push(entry);
+      else unreadable.push(rowText(cells));
+    }
+    const used = Object.values(at);
+    return {
+      app: layout.app,
+      columns: head.filter((name, index) => used.includes(index)).map((name) => name.trim()),
+      ignored: head.filter((name, index) => name.trim() && !used.includes(index)).map((name) => name.trim()),
+      ...foldRepeats(entries),
+      unreadable,
+      notVinyl,
+    };
+  }
+
+  // CSV or TSV text read as a table, with whichever delimiter makes the first row name the columns.
+  function parseRecordTable(text) {
+    const lines = text.replace(/\r\n?/g, '\n');
+    for (const delimiter of DELIMITERS) {
+      const table = readTable(splitRows(lines, delimiter));
+      if (table) return table;
+    }
+    return null;
+  }
+
+  // .xlsx and .numbers files are zip archives, and .xls files start with D0 CF 11 E0.
+  const ZIP = [0x50, 0x4b, 0x03, 0x04];
+  const OLD_EXCEL = [0xd0, 0xcf, 0x11, 0xe0];
+  const startsWith = (bytes, signature) => signature.every((byte, i) => bytes[i] === byte);
+
+  const namesColumns = (rows) => {
+    const head = rows.find((cells) => cells.some((cell) => cell.trim()));
+    return Boolean(head && readHeader(head));
+  };
+
+  /*
+   * What a chosen file holds, from its bytes: rows of cells from an .xlsx file's first sheet whose first
+   * row names the columns (or its first sheet, when none does), or else the file's text. Both go to
+   * readImport. Excel saves "Unicode Text" as UTF-16 and, on Windows, CSV as Windows-1252, so a file
+   * that isn't valid UTF-8 is read as Windows-1252.
+   */
+  async function fileContent(bytes) {
+    if (startsWith(bytes, ZIP)) {
+      const sheets = await xlsx.workbookSheets(bytes);
+      return sheets.find(namesColumns) || sheets[0];
+    }
+    if (startsWith(bytes, OLD_EXCEL)) throw new Error(xlsx.NOT_EXCEL);
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (e) {
+      return new TextDecoder('windows-1252').decode(bytes);
+    }
+  }
+
+  // A backup is a JSON object, or a JSON array of records from an early version.
+  const BACKUP_START = /^\s*(?:\{|\[\s*[{\]])/;
+
+  function parseBackup(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error("That isn't a valid backup.");
+    }
+    const records = Array.isArray(data) ? data : data && data.records;
+    if (!Array.isArray(records)) throw new Error("That doesn't look like a Record Catalog backup.");
+    const list = (value) => (Array.isArray(value) ? value : []);
+    return { records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
+  }
+
+  /*
+   * Reads pasted text or what fileContent read from a file, whichever kind it is:
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          a Record Catalog backup, for importBackup
+   *   { kind: 'table', app, columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
+   *   { kind: 'list', items, unreadable, merged }                                    one "Artist - Title" per line
+   * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
+   * A sheet's rows without column names read like its columns pasted in, as a list.
+   * Throws when text that starts like a backup isn't one.
+   */
+  function readImport(content) {
+    if (Array.isArray(content)) {
+      const table = readTable(content);
+      return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(content.map((cells) => cells.join('\t')).join('\n')) };
+    }
+    const source = String(content || '');
+    if (BACKUP_START.test(source)) return { kind: 'backup', ...parseBackup(source) };
+    const table = parseRecordTable(source);
+    return table ? { kind: 'table', ...table } : { kind: 'list', ...parseRecordList(source) };
   }
 
   // How alike two strings are, from 0 to 1: one minus the edit distance over the longer length.
@@ -406,6 +705,117 @@
     };
   }
 
+  // { key: time } as saved, or as another device sent it, read into a Map. Entries without a time are left out.
+  function timesFrom(value) {
+    const times = new Map();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return times;
+    for (const [key, at] of Object.entries(value)) if (typeof at === 'string') times.set(key, at);
+    return times;
+  }
+
+  const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+  // In key order, so two devices holding the same times write them the same way.
+  const timesObject = (times) => Object.fromEntries([...times].sort(([a], [b]) => compareText(a, b)));
+
+  // What you deleted, by list: record ids, wish ids and vinyl keys, each with when you deleted it.
+  const markersFrom = (value) => ({
+    records: timesFrom(value && value.records),
+    wishlist: timesFrom(value && value.wishlist),
+    confirmed: timesFrom(value && value.confirmed),
+  });
+  const markersObject = (marks) => ({
+    records: timesObject(marks.records),
+    wishlist: timesObject(marks.wishlist),
+    confirmed: timesObject(marks.confirmed),
+  });
+
+  // ---------- Syncing between devices ----------
+
+  const timeOf = (at) => Date.parse(at) || 0;
+  // Records saved before they had a change time count from when they were added.
+  const changedAt = (record) => timeOf(record.updatedAt || record.addedAt);
+
+  /*
+   * One list as two devices hold it, merged entry by entry. Each side is { live, deleted }: Maps from a
+   * key to its entry, and from a key to when it was deleted. The newer copy of an entry wins. A
+   * deletion wins over any copy that isn't newer than it. Two copies changed at the same moment are
+   * told apart by their contents, so both devices pick the same one.
+   */
+  function mergeEntries(mine, theirs, changedAtOf) {
+    const newer = (a, b) => (changedAtOf(a) - changedAtOf(b) || compareText(JSON.stringify(a), JSON.stringify(b))) > 0;
+    const later = (a, b) => (timeOf(a) - timeOf(b) || compareText(a, b)) > 0;
+    const live = new Map(mine.live);
+    for (const [key, entry] of theirs.live) if (!live.has(key) || newer(entry, live.get(key))) live.set(key, entry);
+    const deleted = new Map(mine.deleted);
+    for (const [key, at] of theirs.deleted) if (!deleted.has(key) || later(at, deleted.get(key))) deleted.set(key, at);
+    for (const [key, entry] of live) {
+      if (!deleted.has(key)) continue;
+      if (timeOf(deleted.get(key)) >= changedAtOf(entry)) live.delete(key);
+      else deleted.delete(key);
+    }
+    return { live, deleted };
+  }
+
+  const byAdded = (a, b) => timeOf(a.addedAt) - timeOf(b.addedAt) || compareText(a.id, b.id);
+
+  // The first copy of each album, in the order they were added. `kept` is an albumIndex that collects
+  // them, so this takes seconds less than comparing every pair of thousands of records.
+  function firstCopies(items, kept) {
+    return [...items].sort(byAdded).filter((item) => {
+      if (kept.find(item)) return false;
+      kept.add(item);
+      return true;
+    });
+  }
+
+  const side = (state, list) => ({ live: new Map(state[list].map((record) => [record.id, record])), deleted: timesFrom(state.deleted[list]) });
+
+  /*
+   * The state two devices should both hold after a sync, from what each holds now. The result
+   * depends only on the two states, so merging in either order, or merging again, gives the same one.
+   * - The newer copy of a record, a wish or a vinyl confirmation wins, as a whole.
+   * - A deletion wins over any copy that isn't newer than it, so the other device can't bring it back.
+   * - You keep one copy per album. If both devices added the same album, the copy added first stays.
+   * - A wish for an album you own leaves the wishlist.
+   */
+  function mergeSyncStates(mine, theirs) {
+    const records = mergeEntries(side(mine, 'records'), side(theirs, 'records'), changedAt);
+    const wishes = mergeEntries(side(mine, 'wishlist'), side(theirs, 'wishlist'), changedAt);
+    const confirmed = mergeEntries(
+      { live: timesFrom(mine.confirmed), deleted: timesFrom(mine.deleted.confirmed) },
+      { live: timesFrom(theirs.confirmed), deleted: timesFrom(theirs.deleted.confirmed) },
+      timeOf,
+    );
+    const owned = albumIndex([]);
+    return {
+      records: firstCopies(records.live.values(), owned),
+      wishlist: firstCopies([...wishes.live.values()].filter((wish) => !owned.find(wish)), albumIndex([])),
+      confirmed: timesObject(confirmed.live),
+      deleted: markersObject({ records: records.deleted, wishlist: wishes.deleted, confirmed: confirmed.deleted }),
+    };
+  }
+
+  // Another device's sync state, which arrives over the network. Records that can't be read are left
+  // out, and so are confirmations and deletions without a time.
+  function readSyncState(value) {
+    const data = value && typeof value === 'object' ? value : {};
+    const list = (items) => (Array.isArray(items) ? items : []).flatMap((item) => {
+      if (!item || typeof item.id !== 'string') return [];
+      try {
+        return [readRecord(item)];
+      } catch (e) {
+        return [];
+      }
+    });
+    return {
+      records: list(data.records),
+      wishlist: list(data.wishlist),
+      confirmed: timesObject(timesFrom(data.confirmed)),
+      deleted: markersObject(markersFrom(data.deleted)),
+    };
+  }
+
   /*
    * Pass window.localStorage in the browser. Pass nothing (or null) when storage is
    * blocked and the store keeps everything in memory for this visit only.
@@ -447,26 +857,69 @@
       }
     }
 
+    // Confirmations saved as a plain list, before they had times, move to the new key with unknown times.
+    function loadConfirmed() {
+      const saved = read(KEYS.confirmed, null);
+      if (saved) return timesFrom(saved);
+      const old = read(OLD_CONFIRMED, null);
+      const times = new Map((Array.isArray(old) ? old : []).filter((key) => typeof key === 'string').map((key) => [key, UNKNOWN_TIME]));
+      if (Array.isArray(old)) {
+        try {
+          write(KEYS.confirmed, timesObject(times));
+          backend.removeItem(OLD_CONFIRMED);
+        } catch (ignored) {}
+      }
+      return times;
+    }
+
     const withCurrentFormat = (record) => (RENAMED_FORMATS[record.format] ? { ...record, format: currentFormat(record.format) } : record);
-    let records = loadList(KEYS.records).map(withCurrentFormat);
-    let wishes = loadList(KEYS.wishlist).map(withCurrentFormat);
-    const confirmed = new Set(read(KEYS.confirmed, []).filter((key) => typeof key === 'string'));
+    let records;
+    let wishes;
+    let confirmed; // vinyl key → when you confirmed it
+    let deleted;
+    function load() {
+      records = loadList(KEYS.records).map(withCurrentFormat);
+      wishes = loadList(KEYS.wishlist).map(withCurrentFormat);
+      confirmed = loadConfirmed();
+      deleted = markersFrom(read(KEYS.deleted, null));
+    }
+    load();
     for (const key of OLD_KEYS) {
       try {
         backend.removeItem(key);
       } catch (ignored) {}
     }
 
+    function syncState() {
+      return {
+        records: records.slice(),
+        wishlist: wishes.slice(),
+        confirmed: timesObject(confirmed),
+        deleted: markersObject(deleted),
+      };
+    }
+
+    const notify = () => listeners.forEach((listener) => listener());
+
     function commit() {
-      write(KEYS.records, records);
-      write(KEYS.wishlist, wishes);
-      write(KEYS.confirmed, [...confirmed]);
-      listeners.forEach((listener) => listener());
+      const state = syncState();
+      write(KEYS.records, state.records);
+      write(KEYS.wishlist, state.wishlist);
+      write(KEYS.confirmed, state.confirmed);
+      write(KEYS.deleted, state.deleted);
+      notify();
     }
 
     // Getting a record ticks it off the wishlist.
     function dropWishesYouOwn() {
-      wishes = wishes.filter((wish) => !records.some((record) => sameAlbum(record, wish)));
+      if (!wishes.length) return;
+      const owned = albumIndex(records);
+      const at = now();
+      wishes = wishes.filter((wish) => {
+        if (!owned.find(wish)) return true;
+        deleted.wishlist.set(wish.id, at);
+        return false;
+      });
     }
 
     function find(id) {
@@ -484,12 +937,19 @@
         return records.find((record) => sameAlbum(record, input)) || null;
       },
 
+      // The inputs whose album isn't in your collection yet.
+      notInCollection(inputs) {
+        const owned = albumIndex(records);
+        return inputs.filter((input) => !owned.find(input));
+      },
+
       add(input) {
         const record = cleanRecord(input);
         const copy = records.find((r) => sameAlbum(r, record));
         if (copy) throw new Error(`"${copy.title}" is already in your collection.`);
         if (find(record.id)) record.id = newId();
         records.push(record);
+        deleted.records.delete(record.id);
         dropWishesYouOwn();
         commit();
         return record;
@@ -511,6 +971,7 @@
         if (wanted) throw new Error(`"${wanted.title}" is already on your wishlist.`);
         if (wishes.some((w) => w.id === wish.id)) wish.id = newId();
         wishes.push(wish);
+        deleted.wishlist.delete(wish.id);
         commit();
         return wish;
       },
@@ -529,18 +990,22 @@
 
       confirmVinyl(key) {
         if (!key || confirmed.has(key)) return;
-        confirmed.add(key);
+        confirmed.set(key, now());
+        deleted.confirmed.delete(key);
         commit();
       },
 
       unconfirmVinyl(key) {
-        if (confirmed.delete(key)) commit();
+        if (!confirmed.delete(key)) return;
+        deleted.confirmed.set(key, now());
+        commit();
       },
 
       removeFromWishlist(id) {
         const wish = wishes.find((w) => w.id === id) || null;
         if (!wish) return null;
         wishes = wishes.filter((w) => w.id !== id);
+        deleted.wishlist.set(id, now());
         commit();
         return wish;
       },
@@ -553,13 +1018,28 @@
         // A different artist name means the old MusicBrainz artist link no longer applies,
         // unless the change comes with a new one.
         if (!('artistId' in patch) && normArtist(next.artist) !== normArtist(before.artist)) next.artistId = null;
+        // A different cover means the saved cover color no longer applies.
+        if (!('coverColor' in patch) && next.releaseGroupId !== before.releaseGroupId) next.coverColor = null;
         records[index] = next;
         commit();
         return next;
       },
 
+      // Keeps the main color read from a record's cover, so it isn't read again. Nothing on screen
+      // depends on it, so this saves without telling listeners, and a full storage is ignored.
+      setCoverColor(id, color) {
+        const index = records.findIndex((record) => record.id === id);
+        if (index < 0 || !COVER_COLOR.test(color) || records[index].coverColor === color) return;
+        records[index] = { ...records[index], coverColor: color };
+        try {
+          write(KEYS.records, records);
+        } catch (ignored) {}
+      },
+
       // Adds several records at once, skipping albums you already have. Returns { added, skipped }.
       addMany(inputs) {
+        const owned = albumIndex(records);
+        const ids = new Set(records.map((record) => record.id));
         const added = [];
         const skipped = [];
         for (const input of inputs) {
@@ -570,12 +1050,15 @@
             skipped.push(input);
             continue;
           }
-          if (records.some((r) => sameAlbum(r, record))) {
+          if (owned.find(record)) {
             skipped.push(input);
             continue;
           }
-          if (find(record.id)) record.id = newId();
+          if (ids.has(record.id)) record.id = newId();
+          ids.add(record.id);
+          owned.add(record);
           records.push(record);
+          deleted.records.delete(record.id);
           added.push(record);
         }
         if (added.length) {
@@ -587,8 +1070,13 @@
 
       removeMany(ids) {
         const gone = new Set(ids);
+        const at = now();
         const before = records.length;
-        records = records.filter((r) => !gone.has(r.id));
+        records = records.filter((r) => {
+          if (!gone.has(r.id)) return true;
+          deleted.records.set(r.id, at);
+          return false;
+        });
         if (records.length !== before) commit();
       },
 
@@ -596,6 +1084,7 @@
         const record = find(id);
         if (!record) return null;
         records = records.filter((r) => r.id !== id);
+        deleted.records.set(id, now());
         commit();
         return record;
       },
@@ -603,11 +1092,12 @@
       // Remembers which MusicBrainz artist a hand-typed artist name refers to.
       linkArtist(name, artistId) {
         const key = normArtist(name);
+        const updatedAt = now();
         let changed = 0;
         records = records.map((record) => {
           if (record.artistId || normArtist(record.artist) !== key) return record;
           changed++;
-          return { ...record, artistId };
+          return { ...record, artistId, updatedAt };
         });
         if (changed) commit();
         return changed;
@@ -615,65 +1105,94 @@
 
       exportJSON() {
         return JSON.stringify({
-          app: 'recordcatalog', version: 3, exportedAt: new Date().toISOString(), records, wishlist: wishes, vinylConfirmed: [...confirmed],
+          app: 'recordcatalog', version: 3, exportedAt: now(), records, wishlist: wishes, vinylConfirmed: [...confirmed.keys()],
         }, null, 2);
       },
 
-      // Merges a backup in. Albums you already have, or already want, are skipped.
-      importJSON(text) {
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error("That file isn't a valid backup.");
-        }
-        const list = Array.isArray(data) ? data : data && data.records;
-        if (!Array.isArray(list)) throw new Error("That file doesn't look like a Record Catalog backup.");
-
+      // Merges in a backup as readImport reads it. Albums you already have, or already want, are skipped.
+      importBackup(backup) {
         const ids = new Set([...records, ...wishes].map((record) => record.id));
-        const merge = (items, into, alsoSkip = []) => {
+        const merge = (items, into, marks, alsoSkip = []) => {
           let count = 0;
           let skipped = 0;
+          const known = albumIndex([...into, ...alsoSkip]);
           for (const item of items) {
             let record;
             try {
-              record = cleanRecord(item || {});
+              record = readRecord(item || {});
             } catch (e) {
               skipped++;
               continue;
             }
-            if (ids.has(record.id) || into.some((r) => sameAlbum(r, record)) || alsoSkip.some((r) => sameAlbum(r, record))) {
+            if (ids.has(record.id) || known.find(record)) {
               skipped++;
               continue;
             }
+            // Bringing back something you deleted counts as a change made now, so a sync keeps it.
+            if (marks.delete(record.id)) record.updatedAt = now();
             ids.add(record.id);
             into.push(record);
+            known.add(record);
             count++;
           }
           return { count, skipped };
         };
 
-        const fromRecords = merge(list, records);
-        const fromWishlist = merge(Array.isArray(data.wishlist) ? data.wishlist : [], wishes, records);
+        const fromRecords = merge(backup.records, records, deleted.records);
+        const fromWishlist = merge(backup.wishlist, wishes, deleted.wishlist, records);
         dropWishesYouOwn();
         const confirmedBefore = confirmed.size;
-        for (const key of Array.isArray(data.vinylConfirmed) ? data.vinylConfirmed : []) if (typeof key === 'string') confirmed.add(key);
+        for (const key of backup.vinylConfirmed) {
+          if (typeof key !== 'string' || confirmed.has(key)) continue;
+          // A backup doesn't say when you confirmed, so the time is unknown, unless it brings back one you took back.
+          confirmed.set(key, deleted.confirmed.delete(key) ? now() : UNKNOWN_TIME);
+        }
         if (fromRecords.count || fromWishlist.count || confirmed.size > confirmedBefore) commit();
         return { added: fromRecords.count, skipped: fromRecords.skipped, wishes: fromWishlist.count };
       },
 
+      // What syncs between devices: the records, the wishlist, the vinyl confirmations, and what you
+      // deleted from each, with times. Preferences and the discography cache stay on this device.
+      syncState,
+
+      // Merges another device's sync state into this one and saves the result. Listeners hear about it
+      // only when something changed.
+      applySyncState(theirs) {
+        const mine = syncState();
+        const merged = mergeSyncStates(mine, readSyncState(theirs));
+        if (JSON.stringify(merged) === JSON.stringify(mine)) return;
+        records = merged.records;
+        wishes = merged.wishlist;
+        confirmed = timesFrom(merged.confirmed);
+        deleted = markersFrom(merged.deleted);
+        commit();
+      },
+
+      // Reads everything that syncs again after another tab saved it. Each tab keeps its own copy in
+      // memory and saves all of it, so without this a tab saves over what the other tab just added.
+      reload() {
+        const before = JSON.stringify(syncState());
+        load();
+        if (JSON.stringify(syncState()) !== before) notify();
+      },
+
       getDiscography(artistId) {
         const entry = read(KEYS.discographies, {})[artistId];
-        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_MAX_AGE) return null;
+        if (!entry || Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) return null;
         return entry;
       },
 
+      discographyStale(entry) {
+        return Date.now() - entry.fetchedAt > DISCOGRAPHY_FRESH_FOR;
+      },
+
+      // A discography only gaining the groups that show with Vinyl only off keeps its fetchedAt.
       saveDiscography(artistId, data) {
         const cache = read(KEYS.discographies, {});
         for (const [id, entry] of Object.entries(cache)) {
-          if (Date.now() - entry.fetchedAt > 4 * DISCOGRAPHY_MAX_AGE) delete cache[id];
+          if (Date.now() - entry.fetchedAt > DISCOGRAPHY_KEPT_FOR) delete cache[id];
         }
-        cache[artistId] = { ...data, fetchedAt: Date.now() };
+        cache[artistId] = { ...data, fetchedAt: data.fetchedAt || Date.now() };
         try {
           write(KEYS.discographies, cache);
         } catch (e) {
@@ -723,9 +1242,12 @@
     categoryOf,
     compareDiscography,
     pickRandom,
-    parseRecordList,
+    fileContent,
+    readImport,
     similarity,
     bestAlbumMatch,
+    mergeSyncStates,
+    readSyncState,
     memoryStorage,
     createStore,
   };

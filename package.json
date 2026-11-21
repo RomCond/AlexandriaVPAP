@@ -5,11 +5,15 @@
   "description": "Keep track of the records you own, pick one at random, and see what's missing from an artist's discography.",
   "scripts": {
     "start": "python3 -m http.server 8080",
-    "test": "node --test tests/store.test.js tests/musicbrainz.test.js",
-    "test:e2e": "node --test tests/app.e2e.test.js"
+    "test": "node --test tests/store.test.js tests/musicbrainz.test.js tests/sync.test.js",
+    "test:e2e": "node --test tests/app.e2e.test.js",
+    "test:rules": "firebase emulators:exec --config tests/firebase.json --only firestore,auth --project demo-record-catalog \"node --test --test-concurrency=1 tests/rules.test.js tests/firebase-service.test.js\""
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
     "barcode-detector": "3.2.3",
+    "firebase": "12.19.0",
+    "firebase-tools": "15.37.0",
     "playwright": "1.63.0"
   }
 }
