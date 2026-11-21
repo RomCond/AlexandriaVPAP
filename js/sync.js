@@ -175,6 +175,11 @@
    *   access/{account id}                an access record: status, name, email, requestedAt, decidedAt
    *
    * Only the owner can list access/, so listAccess failing with permission-denied means "not the owner".
+   *
+   * watchVersions listens to the version document. It calls `onVersions` with the counters, or null
+   * when there is no version document, and with whether the snapshot came from the local cache or holds
+   * writes Firebase hasn't confirmed. It calls `onError` once if Firebase ends the listener. It returns
+   * a function that stops listening.
    */
   async function firebaseService(config, load = (name) => import(`${FIREBASE_URL}/firebase-${name}.js`)) {
     const [app, auth, firestore] = await Promise.all(['app', 'auth', 'firestore'].map(load));
@@ -208,6 +213,11 @@
         for (const [id, bucket] of buckets) transaction.set(ref(id), bucket);
         if (next) transaction.set(ref(VERSIONS), next);
       }),
+      watchVersions: (onVersions, onError) => firestore.onSnapshot(
+        firestore.doc(db, 'users', me().uid, 'sync', VERSIONS),
+        (snapshot) => onVersions(snapshot.exists() ? snapshot.data() : null, { fromCache: snapshot.metadata.fromCache, hasPendingWrites: snapshot.metadata.hasPendingWrites }),
+        onError,
+      ),
       readAccess: async () => {
         const snapshot = await firestore.getDoc(accessDoc(me().uid));
         return snapshot.exists() ? asAccess(snapshot) : null;
@@ -272,16 +282,21 @@
   // and within CHANGE_MAX_WAIT of the first one however long the edits go on.
   // Coming back into view syncs unless a sync finished within VISIBLE_GAP. A failed automatic sync
   // tries again after each wait in RETRY, then keeps the last.
+  // With live updates, a change from another device syncs LIVE_DELAY after the version document
+  // shows it, so a burst of snapshots makes one sync. The listener stops once the page has been
+  // hidden for HIDDEN_GRACE, so quick switches between apps don't pay to start it again.
   const AUTO = {
     CHANGE_DELAY: 5000,
     CHANGE_MAX_WAIT: 30000,
     VISIBLE_GAP: 30000,
     RETRY: [15000, 60000, 300000, 900000, 1800000],
+    LIVE_DELAY: 500,
+    HIDDEN_GRACE: 60000,
   };
 
-  // What the page gives automatic syncing: timers, whether the browser is online, and calls for when
-  // it comes back online, goes offline, and comes back into view. Node has none of these, so tests pass
-  // their own.
+  // What the page gives automatic syncing: timers, whether the browser is online and the page visible,
+  // and calls for when it comes back online, goes offline, comes back into view and is hidden. Node
+  // has none of these, so tests pass their own.
   function browserEnvironment(win) {
     return {
       now: () => Date.now(),
@@ -290,8 +305,12 @@
       online: () => win.navigator.onLine !== false,
       onOnline: (fn) => win.addEventListener('online', fn),
       onOffline: (fn) => win.addEventListener('offline', fn),
+      visible: () => win.document.visibilityState !== 'hidden',
       onVisible: (fn) => win.document.addEventListener('visibilitychange', () => {
         if (win.document.visibilityState === 'visible') fn();
+      }),
+      onHidden: (fn) => win.document.addEventListener('visibilitychange', () => {
+        if (win.document.visibilityState === 'hidden') fn();
       }),
     };
   }
@@ -316,6 +335,13 @@
    * state.offline says the browser is offline, and state.waiting says this device has changes it
    * hasn't synced. A used-up quota, a collection too big to sync, or rules that refuse an account
    * that still has access stop automatic syncs until Sync now.
+   *
+   * With `auto`, and a service that has watchVersions, the page also listens to the version document
+   * while automatic syncs may run, and state.live says so. A snapshot from Firebase's servers whose
+   * counters are higher than the ones this device remembers syncs LIVE_DELAY later, which reads only
+   * the buckets that changed. This device's own writes come back with the counters it just
+   * remembered, so they sync nothing. A snapshot that comes while a step runs is checked once the
+   * step ends, against the counters that step saved. See updateLive for when the listener runs.
    */
   function startSync(store, { config, service, loadService = firebaseService, auto = null } = {}) {
     const listeners = new Set();
@@ -328,11 +354,14 @@
       syncedAt: store.getPref('syncedAt', null),
       offline: Boolean(auto) && !auto.online(),
       waiting: false,
+      live: false,
     };
     const busy = () => !['off', 'starting', 'unavailable', 'signedOut', 'idle'].includes(state.phase);
 
     function set(patch) {
       state = { ...state, ...patch };
+      updateLive();
+      if (state.live !== Boolean(unwatch)) state = { ...state, live: Boolean(unwatch) };
       listeners.forEach((listener) => listener(state));
     }
 
@@ -366,11 +395,13 @@
         failed = error || new Error('Sync failed');
         set({ phase: state.user ? 'idle' : 'signedOut', problem: problemOf(error) });
       }
+      failedLast = Boolean(failed);
       settled();
       return failed;
     }
 
     let lastSynced = 0;
+    let failedLast = false; // the last step failed
     async function syncStep() {
       const seen = changes;
       set({ phase: 'syncing' });
@@ -378,6 +409,7 @@
       const syncedAt = new Date().toISOString();
       store.setPref('syncedAt', syncedAt);
       lastSynced = auto ? auto.now() : 0;
+      liveBroken = false;
       set({ syncedAt, waiting: state.waiting && changes !== seen });
     }
 
@@ -401,6 +433,13 @@
     function cancel() {
       if (timer !== null) auto.clearTimeout(timer);
       timer = null;
+    }
+
+    // Stops automatic syncs, and the listener with them, until Sync now.
+    function stop() {
+      stopped = true;
+      cancel();
+      set({});
     }
 
     // Syncs after `delay`, or sooner if one is already due sooner. A change pushes back a sync that
@@ -439,29 +478,111 @@
       }
       const code = error.code;
       if (code === 'resource-exhausted' || code === 'record-catalog/too-big') {
-        stopped = true;
-        cancel();
+        stop();
       } else if (code === 'permission-denied') {
-        // Access may have been removed. Checking costs a read or two, and a removed account stops here.
-        // An account that still has access was refused by the rules, such as rules not yet updated
-        // for this version of the app, so the problem stays and automatic syncs stop until Sync now.
-        const problem = state.problem;
-        await refresh(false);
-        if (SYNCS.has(state.access)) {
-          stopped = true;
-          cancel();
-          if (!state.problem) set({ problem });
-        }
+        await recheck(state.problem);
       } else {
         schedule(AUTO.RETRY[Math.min(failures, AUTO.RETRY.length - 1)]);
         failures += 1;
       }
     }
 
+    // Access may have been removed. Checking costs a read or two, and a removed account stops here.
+    // An account that still has access was refused by the rules, such as rules not yet updated for
+    // this version of the app, so the problem stays and automatic syncs stop until Sync now.
+    async function recheck(problem) {
+      await refresh(false);
+      if (SYNCS.has(state.access)) {
+        stop();
+        if (!state.problem) set({ problem });
+      }
+    }
+
     function settled() {
-      if (!again) return;
-      again = false;
-      schedule(0);
+      if (again) {
+        again = false;
+        schedule(0);
+      }
+      check();
+    }
+
+    // ---- Live updates ----
+    let unwatch = null; // stops the listener
+    let watching = null; // the account it listens for
+    let latest = null; // the counters in the last snapshot from Firebase's servers
+    let liveBroken = false; // the listener failed, until the next sync, view or reconnect
+    let hidden = Boolean(auto) && typeof auto.visible === 'function' && !auto.visible();
+    let hideTimer = null;
+
+    const canLive = () => Boolean(auto) && Boolean(active) && typeof active.watchVersions === 'function';
+
+    /*
+     * Starts or stops the listener to match the state. It runs while automatic syncs may run: signed in,
+     * with access, and not stopped by a used-up quota or refusal. So signing out, losing access, a
+     * used-up quota and enabled: false all stop it. It also stops once the page has been hidden for
+     * HIDDEN_GRACE: a hidden page would pay a read for every change another device makes, and starting
+     * the listener again on return costs one read, the same as the sync that coming back made before.
+     * It keeps running while offline, since Firebase picks it up again by itself on reconnecting.
+     */
+    function updateLive() {
+      const want = canLive() && mayAuto() && !hidden && !liveBroken ? state.user.id : null;
+      if (watching === want) return;
+      if (unwatch) {
+        const stopListening = unwatch;
+        unwatch = null;
+        watching = null;
+        latest = null;
+        stopListening();
+      }
+      if (!want) return;
+      watching = want;
+      const mine = () => watching === want;
+      const listener = active.watchVersions((versions, meta = {}) => {
+        if (!mine() || meta.fromCache || meta.hasPendingWrites) return;
+        latest = versions;
+        check();
+      }, (error) => {
+        if (!mine()) return;
+        unwatch = null;
+        watching = null;
+        latest = null;
+        liveFailed(error || new Error('Live updates failed'));
+      });
+      if (mine()) unwatch = listener;
+    }
+
+    // Firebase ends a listener that fails. A used-up quota stops automatic syncs, as it does for a
+    // sync, and a refusal checks access again. Otherwise the listener waits for the next successful
+    // sync, the page coming back into view or the browser coming back online, so a failing listener
+    // can't start again in a loop.
+    function liveFailed(error) {
+      liveBroken = true;
+      const code = error.code;
+      if (code === 'resource-exhausted') {
+        stopped = true;
+        cancel();
+        set({ problem: problemOf(error) });
+      } else if (code === 'permission-denied' && !busy()) {
+        recheck(problemOf(error));
+      } else {
+        set({});
+      }
+    }
+
+    // Whether the counters in `versions` show a write this device hasn't seen.
+    function newer(versions) {
+      const memory = memoryOf(store, state.user.id);
+      if (!memory) return true;
+      return BUCKETS.some((id) => Number.isInteger(versions[id]) && versions[id] > memory.counters[id]);
+    }
+
+    // Syncs soon when the last snapshot shows another device's write. While a step runs, this waits
+    // for settled(), which checks again against the counters the step saved. After a failed step,
+    // the retry, view or reconnect that comes next picks the change up, so snapshots don't cut the
+    // backoff short.
+    function check() {
+      if (!latest || !mayAuto() || busy() || failedLast) return;
+      if (newer(latest)) schedule(AUTO.LIVE_DELAY);
     }
 
     if (auto) {
@@ -472,16 +593,39 @@
         schedule(AUTO.CHANGE_DELAY, true);
       });
       auto.onOnline(() => {
-        set({ offline: false });
         failures = 0;
-        // An access check that couldn't run offline runs now, and syncs if the account may.
+        liveBroken = false;
+        set({ offline: false });
+        // An access check that couldn't run offline runs now, and syncs if the account may. A running
+        // listener catches up by itself, so only changes made here need a sync.
         if (state.user && !state.access && !busy()) refresh(true);
-        else schedule(0);
+        else if (!unwatch || state.waiting || failedLast) schedule(0);
       });
       auto.onOffline(() => set({ offline: true }));
       auto.onVisible(() => {
-        if (auto.now() - lastSynced >= AUTO.VISIBLE_GAP || state.waiting) schedule(0);
+        if (hideTimer !== null) auto.clearTimeout(hideTimer);
+        hideTimer = null;
+        hidden = false;
+        liveBroken = false;
+        set({});
+        // A listener that is running, or starting again, brings what other devices changed: its first
+        // snapshot is checked like any other. Only changes made here need a sync.
+        if (unwatch) {
+          if (state.waiting || failedLast) schedule(0);
+        } else if (auto.now() - lastSynced >= AUTO.VISIBLE_GAP || state.waiting) {
+          schedule(0);
+        }
       });
+      if (typeof auto.onHidden === 'function') {
+        auto.onHidden(() => {
+          if (hideTimer !== null) return;
+          hideTimer = auto.setTimeout(() => {
+            hideTimer = null;
+            hidden = true;
+            set({});
+          }, AUTO.HIDDEN_GRACE);
+        });
+      }
     }
 
     // A session Firebase restores when the page opens gets its access checked, and syncs when it may
@@ -544,6 +688,7 @@
     async function syncNow() {
       stopped = false;
       failures = 0;
+      liveBroken = false;
       cancel();
       await refresh(true);
     }

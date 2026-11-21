@@ -13,15 +13,29 @@ const firebaseError = (code) => Object.assign(new Error(`Firebase: ${code}`), { 
 
 // What a Firebase project holds: each account's buckets, as { state, version }, its version document,
 // and the access records. The owner is OWNER, as the rules would name it.
+// `watchers` are the listeners on version documents, each { id, onVersions, onError }. Each new
+// version document goes to its account's listeners at once, before the transaction that wrote it
+// returns, which is the soonest Firebase could send it.
 function memoryServer() {
   const buckets = new Map();
   const versions = new Map();
-  return {
+  const server = {
     access: new Map(),
+    watchers: new Set(),
     bucketsOf: (id) => buckets.get(id) || buckets.set(id, new Map()).get(id),
     versionsOf: (id) => versions.get(id) || null,
-    setVersions: (id, value) => (value ? versions.set(id, value) : versions.delete(id)),
+    setVersions(id, value) {
+      if (value) versions.set(id, value);
+      else versions.delete(id);
+      server.notify(id);
+    },
+    notify(id, meta = { fromCache: false, hasPendingWrites: false }) {
+      const value = versions.get(id) || null;
+      for (const watcher of [...server.watchers]) if (watcher.id === id) watcher.onVersions(value && { ...value }, meta);
+    },
+    watchersOf: (id) => [...server.watchers].filter((watcher) => watcher.id === id).length,
   };
+  return server;
 }
 
 // What firestore.rules checks when a transaction writes `buckets` and `next` over what `held` and
@@ -96,6 +110,31 @@ function memoryService({ account = OWNER, server = memoryServer() } = {}) {
         for (const [id, bucket] of buckets) held.set(id, { ...bucket });
         if (next) server.setVersions(service.user.id, { ...next });
         return;
+      }
+    },
+    // A listener on the version document, refused as the rules refuse a read. The first snapshot comes
+    // a moment later, as Firebase's does. Set `failWatch` to make it fail with that error instead.
+    failWatch: null,
+    watchVersions(onVersions, onError) {
+      const watcher = { id: service.user.id, onVersions, onError };
+      const failure = service.failWatch || (!isOwner() && (mine() || {}).status !== 'approved' ? firebaseError('permission-denied') : null);
+      if (failure) {
+        queueMicrotask(() => onError(failure));
+        return () => {};
+      }
+      server.watchers.add(watcher);
+      queueMicrotask(() => {
+        const value = server.versionsOf(watcher.id);
+        if (server.watchers.has(watcher)) onVersions(value && { ...value }, { fromCache: false, hasPendingWrites: false });
+      });
+      return () => server.watchers.delete(watcher);
+    },
+    // Ends every listener of this account with `error`, as Firebase does when one fails.
+    breakWatch(error) {
+      for (const watcher of [...server.watchers]) {
+        if (watcher.id !== service.user.id) continue;
+        server.watchers.delete(watcher);
+        watcher.onError(error);
       }
     },
     // A write from the app before counters existed: buckets alone, as { state }.
@@ -674,7 +713,7 @@ const settle = async () => {
 
 // What startSync's `auto` takes, with a clock that moves only when a test moves it.
 function fakeEnvironment() {
-  const env = { time: 0, timers: [], isOnline: true, handlers: { online: [], offline: [], visible: [] } };
+  const env = { time: 0, timers: [], isOnline: true, isVisible: true, handlers: { online: [], offline: [], visible: [], hidden: [] } };
   Object.assign(env, {
     now: () => env.time,
     setTimeout(fn, ms) {
@@ -688,10 +727,14 @@ function fakeEnvironment() {
     online: () => env.isOnline,
     onOnline: (fn) => env.handlers.online.push(fn),
     onOffline: (fn) => env.handlers.offline.push(fn),
+    visible: () => env.isVisible,
     onVisible: (fn) => env.handlers.visible.push(fn),
+    onHidden: (fn) => env.handlers.hidden.push(fn),
     fire: async (name) => {
       if (name === 'online') env.isOnline = true;
       if (name === 'offline') env.isOnline = false;
+      if (name === 'visible') env.isVisible = true;
+      if (name === 'hidden') env.isVisible = false;
       env.handlers[name].forEach((fn) => fn());
       await settle();
     },
@@ -714,14 +757,17 @@ function fakeEnvironment() {
 }
 
 // A signed-in device of `account` whose page has just opened, with automatic syncing.
-async function autoDevice({ account = OWNER, server = memoryServer(), env = fakeEnvironment() } = {}) {
+// `live: false` gives it a service without watchVersions, which syncs as the app did before live updates.
+async function autoDevice({ account = OWNER, server = memoryServer(), env = fakeEnvironment(), live = true } = {}) {
   const store = S.createStore(S.memoryStorage());
   const service = memoryService({ account, server });
   service.user = account;
+  if (!live) delete service.watchVersions;
+  const watches = live ? countWatches(service) : null;
   const sync = Sync.startSync(store, { service, auto: env });
   await settle();
   const syncs = () => service.writes.length;
-  return { store, service, sync, env, server, syncs };
+  return { store, service, sync, env, server, syncs, watches };
 }
 
 test('with automatic syncing, opening the page syncs once the access check says the account may', async () => {
@@ -805,8 +851,8 @@ test('nothing syncs while offline, and changes sync once back online', async () 
   assert.equal(device.sync.state.offline, true);
 });
 
-test('coming back into view syncs, unless a sync just finished', async () => {
-  const device = await autoDevice();
+test('without live updates, coming back into view syncs, unless a sync just finished', async () => {
+  const device = await autoDevice({ live: false });
   await device.env.advance(Sync.AUTO.VISIBLE_GAP - 1000);
   await device.env.fire('visible');
   assert.equal(device.syncs(), 1, 'synced on opening, too recently to sync again');
@@ -938,4 +984,303 @@ test('signing out stops automatic syncs', async () => {
   await device.env.advance(3600000);
   await device.env.fire('visible');
   assert.deepEqual([device.syncs(), device.sync.state.waiting], [1, false]);
+});
+
+// ---- Live updates ----
+
+// Another device of `account` on `server` that syncs only when the test says, with no automatic syncs.
+function otherDevice(server, account = OWNER) {
+  const store = S.createStore(S.memoryStorage());
+  const service = Object.assign(memoryService({ account, server }), { user: account });
+  return { store, service, sync: () => Sync.syncOnce(store, service, account.id) };
+}
+
+// How many times a device's service started a listener.
+function countWatches(service) {
+  const counter = { starts: 0 };
+  const watch = service.watchVersions;
+  service.watchVersions = (...args) => {
+    counter.starts += 1;
+    return watch(...args);
+  };
+  return counter;
+}
+
+test('a change on another device syncs once, reading only what changed, with no tap', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  assert.deepEqual([pc.syncs(), pc.sync.state.live, server.watchersOf(OWNER.id)], [1, true, 1], 'listening once the access check allows it');
+  const phone = otherDevice(server);
+  await phone.sync();
+  await pc.env.advance(10000);
+  assert.equal(pc.syncs(), 1, 'a phone with nothing new changes nothing');
+
+  phone.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await phone.sync();
+  await pc.env.advance(Sync.AUTO.LIVE_DELAY - 1);
+  assert.equal(pc.syncs(), 1, 'not before the short wait that gathers snapshots');
+  await pc.env.advance(1);
+  assert.deepEqual(titles(pc.store), ['Tago Mago']);
+  assert.deepEqual([pc.syncs(), pc.service.reads.at(-1), pc.service.writes.at(-1)], [2, 2, []], 'the version document and the one bucket that changed');
+  assert.notEqual(pc.sync.state.syncedAt, null);
+  await pc.env.advance(3600000);
+  assert.equal(pc.syncs(), 2, 'and nothing after it');
+});
+
+test('this device\'s own writes come back from the listener and sync nothing', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const exchange = pc.service.exchange;
+  let snapshotsDuringSync = 0;
+  pc.service.exchange = async (plan) => {
+    const watchers = [...server.watchers];
+    const counts = watchers.map((w) => w.onVersions);
+    watchers.forEach((w, i) => {
+      w.onVersions = (...args) => {
+        snapshotsDuringSync += 1;
+        return counts[i](...args);
+      };
+    });
+    try {
+      return await exchange(plan);
+    } finally {
+      watchers.forEach((w, i) => {
+        w.onVersions = counts[i];
+      });
+    }
+  };
+  for (const title of ['Aja', 'Gaucho', 'Pretzel Logic']) {
+    pc.store.add({ artist: 'Steely Dan', title });
+    await pc.env.advance(Sync.AUTO.CHANGE_DELAY);
+  }
+  assert.ok(snapshotsDuringSync >= 3, 'each write came back to the listener before the sync finished');
+  assert.equal(pc.syncs(), 4);
+  await pc.env.advance(3600000);
+  assert.equal(pc.syncs(), 4, 'no sync from its own writes');
+
+  server.notify(OWNER.id);
+  server.notify(OWNER.id);
+  await pc.env.advance(3600000);
+  assert.equal(pc.syncs(), 4, 'snapshots with counters it already has sync nothing');
+});
+
+test('snapshots from the cache or with unconfirmed writes are not taken as changes', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const ahead = Object.fromEntries(Sync.BUCKETS.map((id) => [id, 99]));
+  const [watcher] = server.watchers;
+  watcher.onVersions(ahead, { fromCache: true, hasPendingWrites: false });
+  watcher.onVersions(ahead, { fromCache: false, hasPendingWrites: true });
+  await pc.env.advance(60000);
+  assert.equal(pc.syncs(), 1);
+  watcher.onVersions(ahead, { fromCache: false, hasPendingWrites: false });
+  await pc.env.advance(Sync.AUTO.LIVE_DELAY);
+  assert.equal(pc.syncs(), 2, 'the same counters from the server do sync');
+});
+
+test('a burst of snapshots makes one sync, and snapshots during a sync make at most one more', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const phone = otherDevice(server);
+  for (let i = 0; i < 10; i++) {
+    phone.store.add({ artist: 'Artist', title: `Album ${i}` });
+    await phone.sync();
+    await pc.env.advance(Sync.AUTO.LIVE_DELAY / 10);
+  }
+  await pc.env.advance(Sync.AUTO.LIVE_DELAY);
+  assert.equal(pc.syncs(), 2, 'ten snapshots, one sync');
+  assert.equal(pc.store.all().length, 10);
+
+  let during = 0;
+  pc.service.beforeCommit = async () => {
+    for (let i = 0; i < 5; i++) {
+      phone.store.add({ artist: 'Late', title: `Late ${i}` });
+      await phone.sync();
+      during += 1;
+    }
+  };
+  phone.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await phone.sync();
+  await pc.env.advance(60000);
+  assert.equal(during, 5);
+  assert.ok(pc.syncs() <= 4, `a sync that ran again for the writes, and one more at most, not one per snapshot (${pc.syncs()})`);
+  assert.equal(pc.store.all().length, 16, 'and it has every record');
+  const settled = pc.syncs();
+  await pc.env.advance(3600000);
+  assert.equal(pc.syncs(), settled);
+});
+
+test('snapshots don\'t cut short the wait after a failed sync', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const phone = otherDevice(server);
+  pc.service.failExchange = firebaseError('unavailable');
+  phone.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await phone.sync();
+  await pc.env.advance(Sync.AUTO.LIVE_DELAY);
+  assert.equal(pc.sync.state.problem.kind, 'offline');
+  let tries = 0;
+  const exchange = pc.service.exchange;
+  pc.service.exchange = (plan) => {
+    tries += 1;
+    return exchange(plan);
+  };
+  for (let i = 0; i < 5; i++) {
+    phone.store.add({ artist: 'Can', title: `Album ${i}` });
+    await phone.sync();
+    await pc.env.advance(1000);
+  }
+  assert.equal(tries, 0, 'five snapshots, no extra tries');
+  pc.service.failExchange = null;
+  await pc.env.advance(Sync.AUTO.RETRY[0]);
+  assert.deepEqual([tries, pc.sync.state.problem, pc.store.all().length], [1, null, 6]);
+});
+
+test('the listener starts only for an account that may sync, and stops when it signs out', async () => {
+  const server = memoryServer();
+  server.access.set(ANA.id, { id: ANA.id, status: 'pending' });
+  server.access.set(BEN.id, { id: BEN.id, status: 'approved' });
+  const ana = await autoDevice({ account: ANA, server });
+  assert.deepEqual([ana.sync.state.access, ana.sync.state.live, ana.watches.starts], ['pending', false, 0], 'a pending account never asks');
+  const ben = await autoDevice({ account: BEN, server });
+  assert.deepEqual([ben.sync.state.access, ben.sync.state.live, server.watchersOf(BEN.id)], ['approved', true, 1]);
+
+  await ben.sync.signOut();
+  assert.deepEqual([ben.sync.state.live, server.watchersOf(BEN.id)], [false, 0]);
+  const other = otherDevice(server, BEN);
+  other.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await other.sync();
+  await ben.env.advance(3600000);
+  assert.equal(ben.syncs(), 1, 'a signed-out device takes in nothing');
+
+  const pc = await autoDevice({ server });
+  assert.equal(server.watchersOf(OWNER.id), 1);
+  pc.service.user = null;
+  pc.service.notify(null);
+  await settle();
+  assert.deepEqual([pc.sync.state.phase, pc.sync.state.live, server.watchersOf(OWNER.id)], ['signedOut', false, 0], 'signing out on another tab stops it too');
+});
+
+test('the listener stops when access is removed, whether a sync or the listener finds out', async () => {
+  for (const finder of ['sync', 'listener']) {
+    const server = memoryServer();
+    server.access.set(ANA.id, { id: ANA.id, status: 'approved' });
+    const ana = await autoDevice({ account: ANA, server });
+    assert.equal(server.watchersOf(ANA.id), 1);
+    server.access.set(ANA.id, { id: ANA.id, status: 'denied' });
+    if (finder === 'sync') {
+      ana.store.add({ artist: 'Can', title: 'Tago Mago' });
+      await ana.env.advance(Sync.AUTO.CHANGE_DELAY);
+    } else {
+      ana.service.breakWatch(firebaseError('permission-denied'));
+      await settle();
+    }
+    assert.deepEqual([ana.sync.state.access, ana.sync.state.live, server.watchersOf(ANA.id)], ['denied', false, 0], finder);
+    await ana.env.fire('visible');
+    await ana.env.fire('online');
+    await ana.env.advance(3600000);
+    assert.equal(server.watchersOf(ANA.id), 0, `${finder}: nothing starts it again`);
+  }
+});
+
+test('enabled: false starts no listener', async () => {
+  const service = memoryService();
+  service.user = OWNER;
+  const watches = countWatches(service);
+  const sync = Sync.startSync(S.createStore(S.memoryStorage()), { config: { enabled: false }, service, auto: fakeEnvironment() });
+  await settle();
+  assert.deepEqual([sync.state.phase, sync.state.live, watches.starts], ['off', false, 0]);
+});
+
+test('a used-up quota stops the listener until Sync now, whether a sync or the listener hits it', async () => {
+  for (const finder of ['sync', 'listener']) {
+    const server = memoryServer();
+    const pc = await autoDevice({ server });
+    if (finder === 'sync') {
+      pc.service.failExchange = firebaseError('resource-exhausted');
+      pc.store.add({ artist: 'Can', title: 'Tago Mago' });
+      await pc.env.advance(Sync.AUTO.CHANGE_DELAY);
+    } else {
+      pc.service.breakWatch(firebaseError('resource-exhausted'));
+      await settle();
+    }
+    assert.deepEqual([pc.sync.state.problem.kind, pc.sync.state.live, server.watchersOf(OWNER.id)], ['quotaReached', false, 0], finder);
+    const watches = countWatches(pc.service);
+    await pc.env.fire('visible');
+    await pc.env.fire('online');
+    await pc.env.advance(24 * 3600000);
+    assert.equal(watches.starts, 0, `${finder}: no view or reconnect starts it`);
+    pc.service.failExchange = null;
+    await pc.sync.syncNow();
+    assert.deepEqual([pc.sync.state.problem, pc.sync.state.live, server.watchersOf(OWNER.id)], [null, true, 1], `${finder}: Sync now starts it again`);
+  }
+});
+
+test('a hidden page stops listening after a while, and starting again on return costs no sync', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const watches = countWatches(pc.service);
+  await pc.env.fire('hidden');
+  await pc.env.advance(Sync.AUTO.HIDDEN_GRACE - 1000);
+  await pc.env.fire('visible');
+  assert.deepEqual([watches.starts, server.watchersOf(OWNER.id)], [0, 1], 'a quick switch keeps the same listener');
+
+  await pc.env.fire('hidden');
+  await pc.env.advance(Sync.AUTO.HIDDEN_GRACE);
+  assert.deepEqual([pc.sync.state.live, server.watchersOf(OWNER.id)], [false, 0]);
+  const phone = otherDevice(server);
+  phone.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await phone.sync();
+  await pc.env.advance(3600000);
+  assert.equal(pc.syncs(), 1, 'a hidden page takes in nothing');
+
+  await pc.env.fire('visible');
+  assert.deepEqual([watches.starts, pc.sync.state.live], [1, true]);
+  await pc.env.advance(Sync.AUTO.LIVE_DELAY);
+  assert.deepEqual([pc.syncs(), titles(pc.store)], [2, ['Tago Mago']], 'the first snapshot brings the change');
+
+  await pc.env.fire('hidden');
+  await pc.env.advance(Sync.AUTO.HIDDEN_GRACE);
+  await pc.env.fire('visible');
+  await pc.env.advance(3600000);
+  assert.deepEqual([watches.starts, pc.syncs()], [2, 2], 'with nothing new, coming back costs the listener and no sync');
+});
+
+test('the listener keeps running offline, and coming back online syncs only changes made here', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const watches = countWatches(pc.service);
+  await pc.env.fire('offline');
+  assert.equal(pc.sync.state.live, true);
+  await pc.env.fire('online');
+  await pc.env.advance(60000);
+  assert.deepEqual([pc.syncs(), watches.starts], [1, 0], 'nothing changed, so nothing to read');
+
+  await pc.env.fire('offline');
+  pc.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await pc.env.advance(60000);
+  await pc.env.fire('online');
+  await pc.env.advance(0);
+  assert.deepEqual([pc.syncs(), pc.sync.state.waiting], [2, false]);
+});
+
+test('a listener that fails waits for the next sync, view or reconnect to start again', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const watches = countWatches(pc.service);
+  pc.service.failWatch = firebaseError('internal');
+  pc.service.breakWatch(firebaseError('internal'));
+  await settle();
+  assert.deepEqual([pc.sync.state.live, pc.sync.state.problem], [false, null]);
+  await pc.env.advance(3600000);
+  assert.equal(watches.starts, 0, 'no loop of new listeners');
+  await pc.env.fire('visible');
+  assert.equal(watches.starts, 1);
+  await settle();
+  await pc.env.advance(3600000);
+  assert.equal(watches.starts, 1, 'failing again waits again');
+  pc.service.failWatch = null;
+  pc.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await pc.env.advance(Sync.AUTO.CHANGE_DELAY);
+  assert.deepEqual([watches.starts, pc.sync.state.live, server.watchersOf(OWNER.id)], [2, true, 1], 'a sync that works starts it again');
 });
