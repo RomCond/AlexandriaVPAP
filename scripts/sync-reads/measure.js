@@ -19,6 +19,15 @@
  * document in every evaluation. A bucket write looks up the version document with getAfter (new
  * rules only). Firebase's documentation leaves open whether a commit pays for the same lookup once or
  * once per document it evaluates, so a commit's lookups are given as a range from the one to the other.
+ *
+ * In `new` mode it also measures the listener on the version document. Firestore bills one read for
+ * each snapshot of a document a listener receives, and the emulator evaluates the rules each time it
+ * starts or resumes a listener and each time it sends one a change, so a friend's listener also pays
+ * an access lookup each time. A listener's evaluations are told apart from a sync's by count: a sync
+ * reads the version document once. Reconnecting is measured by turning the client's network off and
+ * on. The emulator doesn't say what a reconnect bills: Firestore's documentation says a listener that
+ * comes back within 30 minutes pays only for documents that changed, and one that was gone longer
+ * pays as if it were new.
  */
 const fs = require('fs');
 const path = require('path');
@@ -125,14 +134,16 @@ async function main() {
   }
 
   const titles = Array.from({ length: 60 }, (_, i) => ({ artist: `Artist ${i % 9}`, title: `Album ${i}` }));
+  const report = (scenario, result) => console.log(JSON.stringify({ mode, who: current, scenario, ...result, billed: result.reads ? billed(current, result) : undefined }));
+  let current = null;
   for (const who of ['owner', 'friend']) {
+    current = who;
     const uid = await signIn(who);
     const device = () => S.createStore(S.memoryStorage());
     const a = device();
     const b = device();
     a.addMany(titles);
     const syncOf = (store) => () => Sync.syncOnce(store, service, uid);
-    const report = (scenario, result) => console.log(JSON.stringify({ mode, who, scenario, ...result, billed: result.reads ? billed(who, result) : undefined }));
 
     report('first device uploads 60 records', await measure(syncOf(a)));
     report('a new device', await measure(syncOf(b)));
@@ -151,6 +162,62 @@ async function main() {
         await service.readAccess();
       }
     }));
+    if (mode === 'new') await measureListener(who, a, b, syncOf);
+  }
+
+  // The listener on device `a`'s version document, while `b` and `a` write. Each report gives the
+  // snapshots the listener received and the rules evaluations it caused, and what Firestore bills
+  // for the listener alone. A sync in the same step is reported on its own line above.
+  async function measureListener(who, a, b, syncOf) {
+    for (const store of [a, b, a]) await syncOf(store)();
+    let snapshots = 0;
+    let first;
+    const started = new Promise((resolve) => {
+      first = resolve;
+    });
+    let stop = () => {};
+    const live = (scenario, result, received, syncReadsVersions) => {
+      const evaluations = result.versionReads - syncReadsVersions;
+      const lookups = who === 'friend' ? evaluations : 0;
+      console.log(JSON.stringify({ mode, who, scenario, snapshots: received, evaluations, denied: result.denied, billed: [received + lookups, received + lookups] }));
+    };
+    const versionReads = (counted) => ({ ...counted, versionReads: evaluations.seen.filter((e) => e.method === 'get' && !e.inTransaction && e.id.endsWith('/sync/versions')).length });
+    const step = async (fn) => {
+      const before = snapshots;
+      const counted = versionReads(await measure(fn));
+      return [counted, snapshots - before];
+    };
+
+    let [counted, received] = await step(async () => {
+      stop = service.watchVersions((versions, meta) => {
+        if (meta.fromCache) return;
+        snapshots += 1;
+        first();
+      }, (error) => console.error('listener failed', error.code));
+      await started;
+    });
+    live('listener starts', counted, received, 0);
+
+    b.add({ artist: 'Neu!', title: 'Neu! 2' });
+    [counted, received] = await step(syncOf(b));
+    live('a change from another device reaches the listener', counted, received, 1);
+    report('the sync that change starts', await measure(syncOf(a)));
+
+    a.add({ artist: 'Cluster', title: 'Zuckerzeit' });
+    [counted, received] = await step(syncOf(a));
+    live('this device\'s own write comes back to its listener', counted, received, 1);
+
+    [counted, received] = await step(syncOf(a));
+    live('a sync that writes nothing', counted, received, 1);
+
+    const db = firestore.getFirestore(getApp());
+    [counted, received] = await step(async () => {
+      await firestore.disableNetwork(db);
+      await settle();
+      await firestore.enableNetwork(db);
+    });
+    live('reconnecting, with nothing changed', counted, received, 0);
+    stop();
   }
   evaluations.close();
   await auth.signOut(session);
