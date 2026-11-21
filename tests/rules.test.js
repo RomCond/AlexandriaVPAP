@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require('@firebase/rules-unit-testing');
-const { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, serverTimestamp, Timestamp, writeBatch, runTransaction, setLogLevel } = require('firebase/firestore');
+const { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, serverTimestamp, Timestamp, writeBatch, runTransaction, onSnapshot, setLogLevel } = require('firebase/firestore');
 
 setLogLevel('silent');
 
@@ -174,6 +174,39 @@ test('only an approved guest syncs', async () => {
   await assertFails(getDoc(versions(as('ana'), 'ana-uid')), 'removed');
   await assertFails(write('ana', 2), 'removed');
   await assertFails(setDoc(versions(as('ana'), 'ana-uid'), counters({ 0: 9 })), 'removed');
+});
+
+// Listens to a version document as the app does, and settles with the first snapshot from the server,
+// or with the error that ends the listener. Then it stops listening.
+function listen(db, uid) {
+  return new Promise((resolve, reject) => {
+    let stop = () => {};
+    let done = false;
+    const finish = (fn, value) => {
+      done = true;
+      stop();
+      fn(value);
+    };
+    stop = onSnapshot(versions(db, uid), (snapshot) => {
+      if (!snapshot.metadata.fromCache) finish(resolve, snapshot.exists() ? snapshot.data() : null);
+    }, (error) => finish(reject, error));
+    if (done) stop();
+  });
+}
+
+test('the owner and an approved guest can listen to their version document, and nobody else can', async () => {
+  await given({ [`users/${OWNER}/sync/versions`]: counters({ 3: 2 }), 'users/ana-uid/sync/versions': counters({ 5: 1 }) });
+  assert.deepEqual(await assertSucceeds(listen(as('owner'), OWNER)), counters({ 3: 2 }));
+  await assertFails(listen(as('ana'), 'ana-uid'), 'no access document');
+  await given({ 'access/ana-uid': status('pending') });
+  await assertFails(listen(as('ana'), 'ana-uid'), 'pending');
+  await given({ 'access/ana-uid': status('approved') });
+  assert.deepEqual(await assertSucceeds(listen(as('ana'), 'ana-uid')), counters({ 5: 1 }));
+  await given({ 'access/ana-uid': status('denied') });
+  await assertFails(listen(as('ana'), 'ana-uid'), 'denied or removed');
+  await assertFails(listen(as('ben'), 'ana-uid'), 'someone else');
+  await assertFails(listen(as('owner'), 'ana-uid'), 'the owner, on a guest');
+  await assertFails(listen(stranger(), OWNER), 'signed out');
 });
 
 test('nobody reads or writes anyone else\'s collection, the owner included', async () => {
