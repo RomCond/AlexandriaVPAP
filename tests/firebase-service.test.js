@@ -37,6 +37,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     const { user } = await auth.signInWithCredential(session, credential);
     return { id: user.uid, name: user.displayName, email: user.email };
   };
+  const nothing = { need: () => [], change: () => ({ buckets: new Map(), versions: null }) };
   const store = S.createStore(S.memoryStorage());
   const sync = Sync.startSync(store, { service });
   const as = async (name) => {
@@ -54,7 +55,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
   async function bucketsOf(id) {
     let size;
     await env.withSecurityRulesDisabled(async (context) => {
-      size = (await admin.getDocs(admin.collection(context.firestore(), 'users', id, 'sync'))).size;
+      size = (await admin.getDocs(admin.collection(context.firestore(), 'users', id, 'sync'))).docs.filter((d) => d.id !== Sync.VERSIONS).length;
     });
     return size;
   }
@@ -72,7 +73,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     assert.deepEqual([sync.state.access, sync.state.problem], ['pending', null]);
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.problem, await bucketsOf(anaId)], ['pending', null, 0]);
-    await assert.rejects(service.exchange(() => new Map()), { code: 'permission-denied' });
+    await assert.rejects(service.exchange(nothing), { code: 'permission-denied' });
 
     await as('ben');
     await sync.requestAccess();
@@ -101,7 +102,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     await as('ana');
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.problem], ['denied', null]);
-    await assert.rejects(service.exchange(() => new Map()), { code: 'permission-denied' });
+    await assert.rejects(service.exchange(nothing), { code: 'permission-denied' });
   } finally {
     await sync.signOut();
     await env.cleanup();
