@@ -72,25 +72,93 @@
     return joined;
   }
 
+  // Beside the buckets, one document holds a counter for each bucket. A sync that writes a bucket adds
+  // one to its counter in the same transaction, and the bucket keeps its own counter as `version`.
+  // Counters, not times, since device clocks differ.
+  const VERSIONS = 'versions';
+
+  // What this device saw at its last sync, saved as a preference: the account, each bucket's counter,
+  // and a hash of each bucket's text. A device with no memory, or one for another account, reads every bucket.
+  const MEMORY = 'syncMemory';
+
+  // cyrb53, a 53-bit hash, so remembering a bucket costs a few bytes instead of its whole text.
+  function hashText(text) {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 2654435761);
+      h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+
+  const EMPTY_STATE = { records: [], wishlist: [], confirmed: {}, deleted: { records: {}, wishlist: {}, confirmed: {} } };
+
+  // The memory, when it is this account's and whole.
+  function memoryOf(store, account) {
+    const saved = store.getPref(MEMORY, null);
+    const whole = (value) => value && typeof value === 'object' && BUCKETS.every((id) => id in value);
+    return saved && saved.account === account && whole(saved.counters) && whole(saved.hashes) ? saved : null;
+  }
+
   /*
-   * One sync. service.exchange reads every bucket and writes the ones `change` returns, as one
-   * transaction, and calls `change` again if another device wrote in between. The merge takes this
-   * device's state and the stored one, and only buckets whose text changed are written. Then this
-   * device takes the merged state too, keeping anything it changed while the sync ran. A bucket past
-   * STATE_LIMIT fails the sync before anything is written, since the rules would refuse it.
+   * One sync, as one transaction through service.exchange, which calls `need` with the version document
+   * (null when there is none), reads the buckets it names, then calls `change` with them and writes what
+   * it returns. It calls both again if another device wrote in between.
+   *
+   * A bucket is read when its counter differs from the one this device remembers, or when this device's
+   * own text for it no longer matches the hash it remembers, which means it changed here. Every other
+   * bucket holds exactly what this device last saw, and this device still holds the same text, so the
+   * merge needs nothing from it. Only buckets whose merged text differs from what Firebase holds are
+   * written. A missing version document means every bucket is read and the document is made again from
+   * the buckets' own counters, which covers collections synced before counters existed.
+   *
+   * Then this device takes the merged state, keeping anything it changed while the sync ran, and
+   * remembers the counters and hashes. A bucket past STATE_LIMIT fails the sync before anything is
+   * written, since the rules would refuse it.
    */
-  async function syncOnce(store, service) {
-    let merged = null;
-    await service.exchange((stored) => {
-      merged = S.mergeSyncStates(store.syncState(), S.readSyncState(joinBuckets(stored.values())));
-      const writes = new Map();
-      for (const [id, text] of splitState(merged)) if (text !== (stored.get(id) || EMPTY_BUCKET)) writes.set(id, text);
-      if ([...writes.values()].some((text) => text.length > STATE_LIMIT)) {
-        throw Object.assign(new Error('The collection is too big to sync.'), { code: 'record-catalog/too-big' });
-      }
-      return writes;
+  async function syncOnce(store, service, account = '') {
+    const memory = memoryOf(store, account);
+    let local = null;
+    let mine = null;
+    let result = null;
+    await service.exchange({
+      need(versions) {
+        // The merge puts a state in a set order, so the same entries always give the same text.
+        local = S.mergeSyncStates(store.syncState(), EMPTY_STATE);
+        mine = splitState(local);
+        if (!versions || !memory) return BUCKETS.slice();
+        return BUCKETS.filter((id) => versions[id] !== memory.counters[id] || hashText(mine.get(id)) !== memory.hashes[id]);
+      },
+      change(versions, stored) {
+        const merged = S.mergeSyncStates(local, S.readSyncState(joinBuckets([...stored.values()].map((held) => held && held.state))));
+        const counters = {};
+        const hashes = {};
+        const buckets = new Map();
+        for (const [id, text] of splitState(merged)) {
+          // A bucket left unread holds what this device holds. One copy per album can still change it,
+          // when a bucket that was read brings an older copy of an album this one has.
+          const held = stored.has(id) ? stored.get(id) : { state: mine.get(id), version: versions[id] };
+          const version = held && Number.isInteger(held.version) ? held.version : 0;
+          const counter = versions && Number.isInteger(versions[id]) ? versions[id] : version;
+          hashes[id] = hashText(text);
+          counters[id] = counter;
+          if (text === ((held && held.state) || EMPTY_BUCKET)) continue;
+          counters[id] = Math.max(counter, version) + 1;
+          buckets.set(id, { state: text, version: counters[id] });
+        }
+        if ([...buckets.values()].some((bucket) => bucket.state.length > STATE_LIMIT)) {
+          throw Object.assign(new Error('The collection is too big to sync.'), { code: 'record-catalog/too-big' });
+        }
+        result = { merged, memory: { account, counters, hashes } };
+        return { buckets, versions: buckets.size || !versions ? counters : null };
+      },
     });
-    store.applySyncState(merged);
+    store.applySyncState(result.merged);
+    store.setPref(MEMORY, result.memory);
   }
 
   // Filled in when each value Firebase needs is set and none is still a PASTE_ placeholder.
@@ -102,7 +170,8 @@
    * The sync service on Firebase, with Firebase's code loaded from Google's CDN at a pinned version.
    * Node tests pass `load` to use the same version from npm against the emulator.
    *
-   *   users/{account id}/sync/{bucket}   one bucket's text, as `state`
+   *   users/{account id}/sync/{bucket}   one bucket's text, as `state`, and its counter, as `version`
+   *   users/{account id}/sync/versions   every bucket's counter, under the bucket's id
    *   access/{account id}                an access record: status, name, email, requestedAt, decidedAt
    *
    * Only the owner can list access/, so listAccess failing with permission-denied means "not the owner".
@@ -128,11 +197,16 @@
       watchUser: (callback) => auth.onAuthStateChanged(session, (user) => callback(asUser(user))),
       signIn: async () => asUser((await auth.signInWithPopup(session, new auth.GoogleAuthProvider())).user),
       signOut: () => auth.signOut(session),
-      exchange: (change) => firestore.runTransaction(db, async (transaction) => {
-        const refs = BUCKETS.map((id) => firestore.doc(db, 'users', me().uid, 'sync', id));
-        const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
-        const stored = new Map(snapshots.map((snapshot, i) => [BUCKETS[i], snapshot.exists() ? snapshot.get('state') : null]));
-        for (const [id, text] of change(stored)) transaction.set(refs[BUCKETS.indexOf(id)], { state: text });
+      exchange: (plan) => firestore.runTransaction(db, async (transaction) => {
+        const ref = (id) => firestore.doc(db, 'users', me().uid, 'sync', id);
+        const found = await transaction.get(ref(VERSIONS));
+        const versions = found.exists() ? found.data() : null;
+        const ids = plan.need(versions);
+        const snapshots = await Promise.all(ids.map((id) => transaction.get(ref(id))));
+        const stored = new Map(snapshots.map((snapshot, i) => [ids[i], snapshot.exists() ? { state: snapshot.get('state'), version: snapshot.get('version') } : null]));
+        const { buckets, versions: next } = plan.change(versions, stored);
+        for (const [id, bucket] of buckets) transaction.set(ref(id), bucket);
+        if (next) transaction.set(ref(VERSIONS), next);
       }),
       readAccess: async () => {
         const snapshot = await firestore.getDoc(accessDoc(me().uid));
@@ -194,6 +268,34 @@
     return { access: mine ? mine.status : 'none', people: [] };
   }
 
+  // How automatic syncs are paced, in milliseconds. A change syncs once edits pause for CHANGE_DELAY,
+  // and within CHANGE_MAX_WAIT of the first one however long the edits go on.
+  // Coming back into view syncs unless a sync finished within VISIBLE_GAP. A failed automatic sync
+  // tries again after each wait in RETRY, then keeps the last.
+  const AUTO = {
+    CHANGE_DELAY: 5000,
+    CHANGE_MAX_WAIT: 30000,
+    VISIBLE_GAP: 30000,
+    RETRY: [15000, 60000, 300000, 900000, 1800000],
+  };
+
+  // What the page gives automatic syncing: timers, whether the browser is online, and calls for when
+  // it comes back online, goes offline, and comes back into view. Node has none of these, so tests pass
+  // their own.
+  function browserEnvironment(win) {
+    return {
+      now: () => Date.now(),
+      setTimeout: (fn, ms) => win.setTimeout(fn, ms),
+      clearTimeout: (id) => win.clearTimeout(id),
+      online: () => win.navigator.onLine !== false,
+      onOnline: (fn) => win.addEventListener('online', fn),
+      onOffline: (fn) => win.addEventListener('offline', fn),
+      onVisible: (fn) => win.document.addEventListener('visibilitychange', () => {
+        if (win.document.visibilityState === 'visible') fn();
+      }),
+    };
+  }
+
   /*
    * The sync session the page shows. state.phase is one of:
    *   off          sync isn't set up or is turned off, and the page shows nothing about it
@@ -207,12 +309,25 @@
    * access record, for the owner only. state.problem is what went wrong last, as { kind, message }, or
    * null. state.syncedAt is when this device last synced. Pass `service` to use one other than
    * Firebase, as the browser tests do.
+   *
+   * Pass `auto`, from browserEnvironment, to sync without a tap: when the page opens with an account
+   * that syncs, when it comes back into view, and CHANGE_DELAY after this device's records change.
+   * Nothing syncs while the browser says it is offline, and it syncs once it is back. Then
+   * state.offline says the browser is offline, and state.waiting says this device has changes it
+   * hasn't synced. A used-up quota or a collection too big to sync stops automatic syncs until Sync now.
    */
-  function startSync(store, { config, service, loadService = firebaseService } = {}) {
+  function startSync(store, { config, service, loadService = firebaseService, auto = null } = {}) {
     const listeners = new Set();
     let active = null;
     const signedOut = { user: null, access: null, people: [] };
-    let state = { phase: 'off', ...signedOut, problem: null, syncedAt: store.getPref('syncedAt', null) };
+    let state = {
+      phase: 'off',
+      ...signedOut,
+      problem: null,
+      syncedAt: store.getPref('syncedAt', null),
+      offline: Boolean(auto) && !auto.online(),
+      waiting: false,
+    };
     const busy = () => !['off', 'starting', 'unavailable', 'signedOut', 'idle'].includes(state.phase);
 
     function set(patch) {
@@ -220,40 +335,159 @@
       listeners.forEach((listener) => listener(state));
     }
 
-    // Runs one step for the signed-in account, starting in `phase`, and settles back to idle.
+    // Changes this device makes count towards state.waiting. Taking in a sync's merged state doesn't.
+    let applying = false;
+    let changes = 0;
+    const syncStore = {
+      syncState: () => store.syncState(),
+      applySyncState(theirs) {
+        applying = true;
+        try {
+          store.applySyncState(theirs);
+        } finally {
+          applying = false;
+        }
+      },
+      getPref: (key, fallback) => store.getPref(key, fallback),
+      setPref: (key, value) => store.setPref(key, value),
+    };
+
+    // Runs one step for the signed-in account, starting in `phase`, and settles back to idle. Returns
+    // the error, if any.
     async function run(phase, step) {
-      if (!active || !state.user || busy()) return;
+      if (!active || !state.user || busy()) return undefined;
       set({ phase, problem: null });
+      let failed = null;
       try {
         await step();
         set({ phase: state.user ? 'idle' : 'signedOut' });
       } catch (error) {
+        failed = error || new Error('Sync failed');
         set({ phase: state.user ? 'idle' : 'signedOut', problem: problemOf(error) });
       }
+      settled();
+      return failed;
+    }
+
+    let lastSynced = 0;
+    async function syncStep() {
+      const seen = changes;
+      set({ phase: 'syncing' });
+      await syncOnce(syncStore, active, state.user.id);
+      const syncedAt = new Date().toISOString();
+      store.setPref('syncedAt', syncedAt);
+      lastSynced = auto ? auto.now() : 0;
+      set({ syncedAt, waiting: state.waiting && changes !== seen });
     }
 
     // Checks the account's access, then syncs if it may and `andSync` is set.
     const refresh = (andSync) => run('checking', async () => {
       const found = await accessOf(active);
       const syncs = andSync && SYNCS.has(found.access);
-      set({ ...found, phase: syncs ? 'syncing' : 'checking' });
-      if (!syncs) return;
-      await syncOnce(store, active);
-      const syncedAt = new Date().toISOString();
-      store.setPref('syncedAt', syncedAt);
-      set({ syncedAt });
+      set({ ...found });
+      if (syncs) await syncStep();
     });
 
-    // A session Firebase restores when the page opens gets its access checked, without a sync.
+    // ---- Automatic syncing ----
+    let timer = null;
+    let dueAt = 0;
+    let again = false; // a sync was due while another step ran
+    let failures = 0;
+    let stopped = false; // a used-up quota or a collection too big, until Sync now
+
+    const mayAuto = () => Boolean(auto) && Boolean(active) && Boolean(state.user) && SYNCS.has(state.access) && !stopped;
+
+    function cancel() {
+      if (timer !== null) auto.clearTimeout(timer);
+      timer = null;
+    }
+
+    // Syncs after `delay`, or sooner if one is already due sooner. A change pushes back a sync that
+    // another change set, up to CHANGE_MAX_WAIT after the first.
+    let byChange = false;
+    let firstChange = 0;
+    function schedule(delay, change = false) {
+      if (!mayAuto()) return;
+      const now = auto.now();
+      if (change) {
+        if (!(timer !== null && byChange)) firstChange = now;
+        delay = Math.max(0, Math.min(delay, firstChange + AUTO.CHANGE_MAX_WAIT - now));
+      }
+      const at = now + delay;
+      if (timer !== null && dueAt <= at && !(change && byChange)) return;
+      cancel();
+      dueAt = at;
+      byChange = change;
+      timer = auto.setTimeout(() => {
+        timer = null;
+        autoSync();
+      }, delay);
+    }
+
+    async function autoSync() {
+      if (!mayAuto() || !auto.online()) return;
+      if (busy()) {
+        again = true;
+        return;
+      }
+      const error = await run('syncing', syncStep);
+      if (error === undefined) return;
+      if (!error) {
+        failures = 0;
+        return;
+      }
+      const code = error.code;
+      if (code === 'resource-exhausted' || code === 'record-catalog/too-big') {
+        stopped = true;
+        cancel();
+      } else if (code === 'permission-denied') {
+        // Access may have been removed. Checking costs a read or two, and a removed account stops here.
+        await refresh(false);
+      } else {
+        schedule(AUTO.RETRY[Math.min(failures, AUTO.RETRY.length - 1)]);
+        failures += 1;
+      }
+    }
+
+    function settled() {
+      if (!again) return;
+      again = false;
+      schedule(0);
+    }
+
+    if (auto) {
+      store.onChange(() => {
+        if (applying || !state.user || !SYNCS.has(state.access)) return;
+        changes += 1;
+        if (!state.waiting) set({ waiting: true });
+        schedule(AUTO.CHANGE_DELAY, true);
+      });
+      auto.onOnline(() => {
+        set({ offline: false });
+        failures = 0;
+        // An access check that couldn't run offline runs now, and syncs if the account may.
+        if (state.user && !state.access && !busy()) refresh(true);
+        else schedule(0);
+      });
+      auto.onOffline(() => set({ offline: true }));
+      auto.onVisible(() => {
+        if (auto.now() - lastSynced >= AUTO.VISIBLE_GAP || state.waiting) schedule(0);
+      });
+    }
+
+    // A session Firebase restores when the page opens gets its access checked, and syncs when it may
+    // and syncing is automatic.
     function use(found) {
       active = found;
       active.watchUser((user) => {
         const same = (user && user.id) === (state.user && state.user.id);
         if (busy()) set({ user });
-        else if (!user) set({ ...signedOut, phase: 'signedOut' });
-        else if (!same || !state.access) {
+        else if (!user) {
+          cancel();
+          set({ ...signedOut, phase: 'signedOut', waiting: false });
+        } else if (!same || !state.access) {
           set({ ...signedOut, user, phase: 'idle' });
-          refresh(false);
+          refresh(Boolean(auto) && auto.online());
         }
       });
     }
@@ -281,7 +515,7 @@
       await refresh(true);
     }
 
-    // Signing out keeps this device's records. It only stops syncing them.
+    // Signing out keeps this device's records. It only stops syncing them, and forgets what it last saw.
     async function signOut() {
       if (!active || busy()) return;
       try {
@@ -290,8 +524,19 @@
         set({ problem: problemOf(error) });
         return;
       }
+      cancel();
+      stopped = false;
       store.setPref('syncedAt', null);
-      set({ ...signedOut, phase: 'signedOut', syncedAt: null, problem: null });
+      store.setPref(MEMORY, null);
+      set({ ...signedOut, phase: 'signedOut', syncedAt: null, problem: null, waiting: false });
+    }
+
+    // Sync now checks access too, and starts automatic syncs again after a used-up quota.
+    async function syncNow() {
+      stopped = false;
+      failures = 0;
+      cancel();
+      await refresh(true);
     }
 
     async function requestAccess() {
@@ -332,7 +577,7 @@
       },
       signIn,
       signOut,
-      syncNow: () => refresh(true),
+      syncNow,
       requestAccess,
       withdrawAccess,
       decide,
@@ -346,8 +591,13 @@
     splitState,
     joinBuckets,
     syncOnce,
+    hashText,
+    VERSIONS,
+    MEMORY,
     STATE_LIMIT,
     DECISIONS,
+    AUTO,
+    browserEnvironment,
     isConfigured,
     firebaseService,
     startSync,

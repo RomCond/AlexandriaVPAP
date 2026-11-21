@@ -260,8 +260,10 @@ const ANA = { id: 'ana-account-id', name: 'Ana Lima', email: 'ana@example.com' }
 const BEN = { id: 'ben-account-id', name: 'Ben Ortiz', email: 'ben@example.com' };
 
 function fakeSyncService() {
-  const fake = { owner: OWNER, buckets: new Map(), access: new Map(), fail: null, calls: [] };
+  const fake = { owner: OWNER, buckets: new Map(), versions: new Map(), access: new Map(), fail: null, calls: [] };
   const bucketsOf = (id) => fake.buckets.get(id) || fake.buckets.set(id, new Map()).get(id);
+  // Each bucket is { state, version }, and the version document counts each bucket's writes, as in Firebase.
+  fake.texts = (id) => [...bucketsOf(id).values()].map((bucket) => bucket.state);
   const moves = { pending: ['approved', 'denied'], approved: ['denied'] };
   const denied = { error: 'permission-denied' };
 
@@ -272,10 +274,14 @@ function fakeSyncService() {
     const isOwner = account.id === OWNER.id;
     const mine = fake.access.get(account.id);
     const syncs = isOwner || (mine && mine.status === 'approved');
-    if (action === 'read') return syncs ? { buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
+    if (action === 'read') return syncs ? { versions: fake.versions.get(account.id) || null, buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
     if (action === 'write') {
       if (!syncs) return denied;
-      for (const [id, text] of Object.entries(arg)) bucketsOf(account.id).set(id, text);
+      const after = arg.versions || fake.versions.get(account.id);
+      const rises = Object.entries(arg.buckets).every(([id, bucket]) => bucket.version > ((bucketsOf(account.id).get(id) || {}).version || 0) && after && after[id] === bucket.version);
+      if (!rises) return denied;
+      for (const [id, bucket] of Object.entries(arg.buckets)) bucketsOf(account.id).set(id, bucket);
+      if (arg.versions) fake.versions.set(account.id, arg.versions);
       return {};
     }
     if (action === 'list') return isOwner ? { people: [...fake.access.values()] } : denied;
@@ -325,9 +331,11 @@ function fakeSyncService() {
             user = null;
             tell();
           },
-          async exchange(change) {
-            const stored = new Map(Object.entries((await call('read')).buckets));
-            await call('write', Object.fromEntries(change(stored)));
+          async exchange(plan) {
+            const { versions, buckets } = await call('read');
+            const ids = plan.need(versions);
+            const { buckets: writes, versions: next } = plan.change(versions, new Map(ids.map((id) => [id, buckets[id] || null])));
+            await call('write', { buckets: Object.fromEntries(writes), versions: next });
           },
           listAccess: async () => (await call('list')).people,
           readAccess: async () => (await call('mine')).access,

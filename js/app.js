@@ -1104,8 +1104,9 @@
   // ---------- Sync between devices ----------
 
   // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
-  // once js/sync-config.js is filled in, and the header button stays hidden until then.
-  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService });
+  // once js/sync-config.js is filled in, and the header button stays hidden until then. Sync runs on
+  // its own when the page opens, comes back into view or comes back online, and after changes.
+  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService, auto: RC.sync.browserEnvironment(window) });
 
   const SYNC_PROBLEMS = {
     notAllowed: () => "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.",
@@ -1142,17 +1143,20 @@
 
   // What the header button shows without opening: the tone of its dot, the words of its name, and for
   // the owner the number of requests waiting.
-  function syncGlance({ phase, access, people, problem, syncedAt }) {
+  function syncGlance({ phase, access, people, problem, syncedAt, offline, waiting }) {
     if (phase === 'unavailable') return { tone: 'problem', words: "couldn't start" };
     if (SYNC_BUSY[phase]) return { tone: 'busy', words: SYNC_BUSY[phase] };
+    if (offline && phase !== 'signedOut' && access !== 'none' && access !== 'denied') {
+      return { tone: 'off', words: waiting ? 'offline, changes will sync when back online' : 'offline' };
+    }
     if (problem) return { tone: 'problem', words: 'something went wrong' };
     if (phase === 'signedOut') return { tone: 'off', words: 'signed out' };
     if (access === 'none') return { tone: 'off', words: 'no access yet' };
     if (access === 'pending') return { tone: 'waiting', words: 'waiting for approval' };
     if (access === 'denied') return { tone: 'off', words: 'no access' };
     const count = waitingPeople(people).length;
-    const words = syncedWhen(syncedAt);
-    return { tone: 'ok', words: count ? `${words}, ${plural(count, 'request')} waiting` : words, count };
+    const words = waiting ? 'changes waiting to sync' : syncedWhen(syncedAt);
+    return { tone: waiting ? 'waiting' : 'ok', words: count ? `${words}, ${plural(count, 'request')} waiting` : words, count };
   }
 
   // The id of the person whose denial or removal waits for a second tap. Neither can be undone in the
@@ -1232,6 +1236,7 @@
   function syncControls({ phase, syncedAt }, busy) {
     return [
       h('p', { id: 'sync-status' }, phase === 'syncing' ? 'Syncing…' : sentence(syncedWhen(syncedAt))),
+      h('p', { class: 'muted small', id: 'sync-auto' }, 'This device syncs on its own while the app is open.'),
       h('div', { class: 'sync-actions' }, h('button', { type: 'button', class: 'primary', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now')),
     ];
   }
