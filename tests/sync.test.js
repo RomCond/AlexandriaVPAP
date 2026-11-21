@@ -620,10 +620,9 @@ test('a memory from another account is ignored, and signing out forgets it', asy
   assert.equal(owner.store.getPref(Sync.MEMORY), null);
 });
 
-test('devices that sync in any order end up equal to each other and to Firebase', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-05-01T00:00:00Z') });
-  // A small fixed-seed generator, so a failure repeats.
-  let seed = 7;
+// Three devices make random edits and syncs, from a fixed seed so a failure repeats. Then each syncs
+// in turn until a round writes nothing, which takes at most three rounds.
+async function randomEdits(t, seed) {
   const random = (n) => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
     return seed % n;
@@ -647,11 +646,24 @@ test('devices that sync in any order end up equal to each other and to Firebase'
     else if (action === 3 && !owned && !store.wishlist().some((wish) => wish.title === album.title)) store.addToWishlist(album);
     else if (action >= 4) await Sync.syncOnce(store, service, OWNER.id);
   }
-  for (let round = 0; round < 2; round++) for (const { store, service } of devices) await Sync.syncOnce(store, service, OWNER.id);
+  let rounds = 0;
+  for (let wrote = true; wrote; rounds++) {
+    assert.ok(rounds < 3, 'devices settle within three rounds');
+    wrote = false;
+    for (const { store, service } of devices) {
+      await Sync.syncOnce(store, service, OWNER.id);
+      wrote = wrote || service.writes.at(-1).length > 0;
+    }
+  }
   for (const { store } of devices) assert.equal(stateOf(store), stateOf(devices[0].store));
   assert.equal(serverState(server), stateOf(devices[0].store));
   for (const { store, service } of devices) await Sync.syncOnce(store, service, OWNER.id);
   assert.deepEqual(devices.map(({ service }) => [service.reads.at(-1), service.writes.at(-1).length]), [[1, 0], [1, 0], [1, 0]], 'once all are equal, a sync is one read');
+}
+
+test('devices that sync in any order end up equal to each other and to Firebase', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-05-01T00:00:00Z') });
+  for (const seed of [7, 11, 23]) await randomEdits(t, seed);
 });
 
 // ---- Automatic syncing ----
