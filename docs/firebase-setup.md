@@ -8,6 +8,8 @@ Only the access rules in your Firebase console know which account is yours. The 
 
 This guide takes about 20 minutes. You need a Google account. Firebase's free Spark plan covers the app for you and a few friends. [What it costs](#what-it-costs) has the numbers.
 
+Live updates need no new rules. The rules that let you read `versions` already let you listen to it. If your published rules mention `versions`, you have nothing to publish for live updates.
+
 **Already set up sync, and your published rules don't mention `versions`?** Publish the new access rules from `firestore.rules`, as in [step 7](#7-publish-the-access-rules), as soon as the updated app is live. Until you do, every sync fails with "Firebase didn't allow that." [Update the rules after an app update](#update-the-rules-after-an-app-update) explains why.
 
 Sync needs the app to be served over the web, such as from GitHub Pages, or from `npm start` at `http://localhost:8080`. It doesn't work when you open `index.html` as a file.
@@ -79,16 +81,36 @@ Keep the filled-in rules in the console only. Don't commit them, because the rep
 
 1. In the app, tap the cloud button, then **Sign out** and **Sign in with Google** again. The window now says "Synced just now." Under it are **Requests** and **People who sync**, which only you see.
 2. On your other device, open the site and sign in with the same Google account. Signing in syncs right away, so the device gets your collection, and its own records go up to Firebase.
-3. The first device gets the other device's records the next time it syncs. Switch back to it, or tap **Sync now**.
+3. If the first device is still open, it gets the other device's records within a second or two, with no tap.
 
 You don't need to tap anything after that. A signed-in device syncs on its own:
 
 - when the app opens
-- when you switch back to it, unless it synced in the last 30 seconds
+- within a second or two of a change on another device, while the app is open
 - 5 seconds after you change something, or at most 30 seconds after the first change when you keep editing
-- when it comes back online
+- when it comes back online with changes waiting
 
-Nothing syncs while the device is offline. Changes wait on the device and go up once it's back online. When a sync fails, the app tries again after 15 seconds, then 1, 5, 15 and 30 minutes. When the day's free reads run out, it stops syncing on its own until you tap **Sync now**. **Sync now** still works at any time. Signing out stops syncing and keeps the records on that device.
+### Live updates
+
+While the app is open, it listens to `versions`, the small document that counts the changes to each part of your collection. When another device syncs, Firebase sends the new counts, and the app syncs half a second later. That sync reads only the parts that changed. Several changes in quick succession make one sync.
+
+Your own syncs change `versions` too, and Firebase sends those counts back. The app already holds them, so they start nothing. A count that arrives while a sync runs is checked once that sync ends.
+
+The app stops listening:
+
+- when you sign out, before it signs out
+- when you lose access, or were never approved
+- when the day's free reads run out, until you tap **Sync now**
+- when sync is turned off with `enabled: false`
+- once the app has been out of view for a minute
+
+A minute out of view covers a quick look at another app, which costs nothing. After that, a hidden page would pay a read for every change another device makes. Starting to listen again when you come back costs one read, about what the sync on coming back used to cost, and the first counts it gets bring anything that changed while you were away. So coming back no longer syncs unless the counts say something changed, or this device has changes waiting.
+
+The app keeps listening while the device is offline. Firebase picks the listener up again on reconnecting and sends the counts only if they changed, so coming back online syncs only when this device has changes waiting.
+
+If the listener fails for another reason, the app doesn't start it again in a loop. It waits for the next sync that works, for you to switch back to the app, or for the device to come back online. Until then, syncs on opening, after a change and on **Sync now** work as before.
+
+Nothing syncs while the device is offline. Changes wait on the device and go up once it's back online. When a sync fails, the app tries again after 15 seconds, then 1, 5, 15 and 30 minutes, and changes from other devices don't cut that wait short. When the day's free reads run out, it stops syncing on its own until you tap **Sync now**. **Sync now** still works at any time. Signing out stops syncing and keeps the records on that device.
 
 The cloud button shows how sync is doing without opening it. A green dot means synced, a blinking blue dot means it's working, and a red dot means something went wrong. A blue ring means changes are waiting to sync, or, for a friend, that they're waiting for your approval. No dot means signed out or offline, and the button's label says which. A number on the button is how many requests are waiting for you. The app checks for new requests when the page opens and each time you tap **Sync now**.
 
@@ -130,13 +152,28 @@ A sync reads one small document first, `versions`, which counts how often each p
 
 On top of that, when the page opens and when you tap **Sync now**, the app checks who has access. That costs you one read for each person who has asked, and at least one. It costs a friend one or two. Syncs after a change or when you switch back skip the check.
 
+Listening to `versions` costs one read each time Firebase sends it. For a friend, the rules also look up their access document each time the listener starts or gets new counts, and that lookup is another read. These are the reads for the listener alone, measured in the Firestore emulator:
+
+| Listener | You | A friend |
+| --- | --- | --- |
+| Starting, when the app opens or you come back after a minute away | 1 | 2 |
+| Each change from another device, plus the sync it starts | 1, plus 2 or 3 | 2, plus 5 to 8 |
+| Each of your own syncs that writes, as its counts come back | 1 | 2 |
+| A sync that writes nothing | 0 | 1 |
+| Reconnecting after less than 30 minutes, nothing changed | 0 | 1 |
+| Reconnecting after more than 30 minutes | 1 | 2 |
+
+The emulator checks the rules when a listener starts, when it reconnects, and each time it gets new counts, so the friend's column counts an access lookup each time. It also checked them once after a sync that wrote nothing. The emulator doesn't bill, so the reconnect rows follow Firebase's documentation: a listener that comes back within 30 minutes pays only for documents that changed, and one that was gone longer pays as if it were new.
+
+Compared with syncing on coming back, listening costs you one more read for each change you make, as its counts come back, and costs nothing extra to come back to the app. For a friend, coming back is cheaper, 2 reads instead of 3, and each change costs 2 more.
+
 Each device's first sync after this update costs the same as a new device. After that, most syncs cost a few reads.
 
 A friend's sync costs more because the rules look up the friend's access document for every document the sync touches, and Firestore counts each lookup as a read. A sync is one transaction. Each document it reads is checked once when it's read, and again when the transaction commits. Each part it writes also looks up `versions`, to check that its count went up. Firebase doesn't say whether a commit pays for the same lookup once or once for each document, so the table gives both ends. Your own syncs skip the access lookup, since the rules know your id.
 
-As a rough guide, a person who opens or switches back to the app 20 times a day and makes 30 changes uses about 150 reads a day, or about 250 for a friend. The free reads cover about 200 people at that pace. If they run out, the app says so and stops syncing on its own, and sync works again the next day. The Firebase console shows the day's reads under **Firestore Database**, on the **Usage** tab.
+As a rough guide, a person who opens or switches back to the app 20 times a day and makes 30 changes uses about 180 reads a day, or about 300 for a friend. Each change another device makes while the app is open adds about 3 reads for you, or about 9 for a friend. The free reads cover about 150 people at that pace. If they run out, the app says so and stops syncing on its own, and sync works again the next day. The Firebase console shows the day's reads under **Firestore Database**, on the **Usage** tab.
 
-`scripts/sync-reads/measure.js` measures these numbers in the emulator, for this version and the one before it.
+`scripts/sync-reads/measure.js` measures these numbers in the emulator, for this version and the one before it, and the listener's in this version.
 
 ## Update the rules after an app update
 
