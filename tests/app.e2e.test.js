@@ -1186,6 +1186,7 @@ test('sync says what went wrong, with the account id for setting up the rules', 
     await page.locator('#sync-problem').waitFor({ timeout: 5000 });
     assert.equal(await text(page, '#sync-problem'), "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.");
     assert.equal(await syncName(page), 'Sync: something went wrong');
+    assert.doesNotMatch(await text(page, '#sync-body'), /\b(null|undefined|NaN)\b/, 'no stray placeholder text while access is unknown');
     await page.click('.sync-account summary');
     assert.equal(await text(page, '#sync-account-id'), 'test-account-id');
 
