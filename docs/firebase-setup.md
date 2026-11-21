@@ -8,6 +8,8 @@ Only the access rules in your Firebase console know which account is yours. The 
 
 This guide takes about 20 minutes. You need a Google account. Firebase's free Spark plan covers the app for you and a few friends. [What it costs](#what-it-costs) has the numbers.
 
+**Already set up sync, and your published rules don't mention `versions`?** Publish the new access rules from `firestore.rules`, as in [step 7](#7-publish-the-access-rules), as soon as the updated app is live. Until you do, every sync fails with "Firebase didn't allow that." [Update the rules after an app update](#update-the-rules-after-an-app-update) explains why.
+
 Sync needs the app to be served over the web, such as from GitHub Pages, or from `npm start` at `http://localhost:8080`. It doesn't work when you open `index.html` as a file.
 
 ## 1. Create the Firebase project
@@ -77,11 +79,18 @@ Keep the filled-in rules in the console only. Don't commit them, because the rep
 
 1. In the app, tap the cloud button, then **Sign out** and **Sign in with Google** again. The window now says "Synced just now." Under it are **Requests** and **People who sync**, which only you see.
 2. On your other device, open the site and sign in with the same Google account. Signing in syncs right away, so the device gets your collection, and its own records go up to Firebase.
-3. Back on the first device, tap **Sync now** to get the other device's records.
+3. The first device gets the other device's records the next time it syncs. Switch back to it, or tap **Sync now**.
 
-A device syncs when you sign in and when you tap **Sync now**. Signing out stops syncing and keeps the records on that device.
+You don't need to tap anything after that. A signed-in device syncs on its own:
 
-The cloud button shows how sync is doing without opening it. A green dot means synced, a blinking blue dot means it's working, a blue ring means waiting for approval, and a red dot means something went wrong. A number on the button is how many requests are waiting for you. The app checks for new requests when the page opens and each time you tap **Sync now**.
+- when the app opens
+- when you switch back to it, unless it synced in the last 30 seconds
+- 5 seconds after you change something, or at most 30 seconds after the first change when you keep editing
+- when it comes back online
+
+Nothing syncs while the device is offline. Changes wait on the device and go up once it's back online. When a sync fails, the app tries again after 15 seconds, then 1, 5, 15 and 30 minutes. When the day's free reads run out, it stops syncing on its own until you tap **Sync now**. **Sync now** still works at any time. Signing out stops syncing and keeps the records on that device.
+
+The cloud button shows how sync is doing without opening it. A green dot means synced, a blinking blue dot means it's working, and a red dot means something went wrong. A blue ring means changes are waiting to sync, or, for a friend, that they're waiting for your approval. No dot means signed out or offline, and the button's label says which. A number on the button is how many requests are waiting for you. The app checks for new requests when the page opens and each time you tap **Sync now**.
 
 ## 9. A friend's first request
 
@@ -109,15 +118,35 @@ Denying and removing can't be undone in the app. The rules don't let a denied pe
 
 Firebase's free Spark plan allows 50,000 document reads a day, shared by everyone who syncs. Writes and storage have their own allowances, and the app stays well inside them.
 
-| Event | Reads |
-| --- | --- |
-| You sync | 16, plus one for each person who has asked, and at least one |
-| An approved friend syncs | about 35, at most 50 |
-| A page opens with someone signed in | 1 or 2 for a friend, and for you one for each person who has asked, at least one |
+A sync reads one small document first, `versions`, which counts how often each part of the collection has changed. Then it reads only the parts that changed, on this device or another one. These are the reads for one sync, measured in the Firestore emulator:
 
-A sync reads the 16 documents that hold the collection. The access check is what makes a friend's sync cost more. Every time the rules look up a friend's access document, Firestore counts a read. A sync is one transaction, which sends each of the 16 reads as its own request, and the rules look the friend up once for each. Then the transaction's commit checks the rules again for each of the 16 documents. In the Firestore emulator, a friend's sync made 32 lookups, whether it wrote 16 documents, one, or none. The 16 reads are 16 requests, so they cost 16 lookups. The commit costs one more if Firebase counts the same lookup once for the whole commit, or 16 more if it counts each one. On top of that, the app reads the friend's access document once before it syncs. So a friend's sync costs 16 for the collection, 17 to 32 for the rules, and one or two for the check, or 34 to 50 reads in all. Your own syncs skip the lookup, since the rules know your id.
+| Sync | You, before | You, now | A friend, before | A friend, now |
+| --- | --- | --- | --- | --- |
+| Nothing changed | 16 | 1 | 33 to 48 | 3 |
+| One record added on this device | 16 | 3 | 33 to 48 | 6 or 7 |
+| One record added on the other device | 16 | 2 | 33 to 48 | 5 or 6 |
+| Both devices changed while apart | 16 | 4 | 33 to 48 | 8 to 10 |
+| A new device | 16 | 17 | 33 to 48 | 35 to 51 |
 
-That works out to about 1,000 to 1,400 friend syncs a day, or 3,000 of your own. If the reads run out, the app says so, and sync works again the next day. The Firebase console shows the day's reads under **Firestore Database**, on the **Usage** tab.
+On top of that, when the page opens and when you tap **Sync now**, the app checks who has access. That costs you one read for each person who has asked, and at least one. It costs a friend one or two. Syncs after a change or when you switch back skip the check.
+
+Each device's first sync after this update costs the same as a new device. After that, most syncs cost a few reads.
+
+A friend's sync costs more because the rules look up the friend's access document for every document the sync touches, and Firestore counts each lookup as a read. A sync is one transaction. Each document it reads is checked once when it's read, and again when the transaction commits. Each part it writes also looks up `versions`, to check that its count went up. Firebase doesn't say whether a commit pays for the same lookup once or once for each document, so the table gives both ends. Your own syncs skip the access lookup, since the rules know your id.
+
+As a rough guide, a person who opens or switches back to the app 20 times a day and makes 30 changes uses about 150 reads a day, or about 250 for a friend. The free reads cover about 200 people at that pace. If they run out, the app says so and stops syncing on its own, and sync works again the next day. The Firebase console shows the day's reads under **Firestore Database**, on the **Usage** tab.
+
+`scripts/sync-reads/measure.js` measures these numbers in the emulator, for this version and the one before it.
+
+## Update the rules after an app update
+
+Some app updates need new access rules. This one does. The app now stores a count with each part of the collection, and the old rules refuse it. The new rules refuse writes from the old app, which doesn't keep the counts. Without that, another device would never notice what the old app wrote.
+
+1. Wait until the updated app is live on your site. GitHub Pages takes a few minutes after the merge.
+2. Publish the new `firestore.rules`, as in [step 7](#7-publish-the-access-rules). Put your account id in `isOwner()` again.
+3. Reload the app on each device, so none keeps running the old page.
+
+Until you publish, syncs fail with "Firebase didn't allow that." A device that still runs the old page gets the same message until it reloads. Nothing is lost either way. Records stay on each device and sync once the rules and the page match.
 
 ## Turn sync off
 
@@ -129,9 +158,9 @@ To run the app only on each device, with nothing loaded from Firebase, open `js/
 | --- | --- |
 | Firebase doesn't allow sign-in from this site's address yet. | Add the site's domain in step 3. |
 | Google sign-in isn't turned on in the Firebase console yet. | Turn on Google in step 2. |
-| Firebase didn't allow that. | If you run the site, check that the rules are published and that the id in `isOwner()` matches the one under **Setting up this site?** If you signed in with a different account, tap **Sign out** and sign in with the right one. |
+| Firebase didn't allow that. | If you just updated the app, publish the new rules, as in [Update the rules after an app update](#update-the-rules-after-an-app-update), and reload the app on each device. Otherwise, if you run the site, check that the rules are published and that the id in `isOwner()` matches the one under **Setting up this site?** If you signed in with a different account, tap **Sign out** and sign in with the right one. |
 | Request access, when you're the owner. | The published rules still have the placeholder, or a different id. Fix the id in step 7. |
-| This site has used up today's free Firebase reads. | Wait until the next day, or see [What it costs](#what-it-costs). |
+| This site has used up today's free Firebase reads. | Wait until the next day, then tap **Sync now**. Until you do, the app doesn't sync on its own. See [What it costs](#what-it-costs). |
 | Your collection is too big to sync. | Each person can sync about 14,000 records. |
 | Your browser blocked the sign-in window. | Allow pop-ups for the site, then tap **Sign in with Google** again. |
 | Couldn't reach the sync service. | Check the connection, then tap **Sync now**. |
@@ -143,10 +172,11 @@ To run the app only on each device, with nothing loaded from Firebase, open `js/
 | Where | What |
 | --- | --- |
 | `access/<account id>` | One document per person who asked: `status` (pending, approved or denied), their `name` and `email` from Google, `requestedAt`, and `decidedAt` once you decide. You have none, since the rules name you. |
-| `users/<account id>/sync/` | That person's collection, wishlist, vinyl confirmations and deletions, in 16 documents with one text field, `state`, each up to 400,000 characters. |
+| `users/<account id>/sync/0` to `f` | That person's collection, wishlist, vinyl confirmations and deletions, in 16 documents. Each has `state`, a text of up to 400,000 characters, and `version`, how many times it has been written. |
+| `users/<account id>/sync/versions` | One count for each of the 16 documents, under fields `0` to `f`. A sync reads this first and reads only the documents whose count changed. The counts never go down. |
 
-Deleting someone's sync documents in the console doesn't delete anything from their devices. Their next sync writes them again, if they still have access.
+Deleting someone's sync documents in the console doesn't delete anything from their devices. Their next sync writes them again, if they still have access. If you delete only `versions`, the next sync reads all 16 documents and writes `versions` again.
 
 ## Check the rules on your computer
 
-`npm run test:rules` runs the rules in Firebase's emulator, on your computer, against cases such as a stranger reading someone else's collection, a guest approving themselves, and a pending guest syncing. It also runs the app's own Firebase calls through a request, an approval and a removal. It needs Java and `npm install`, and the first run downloads the emulator. It never touches your Firebase project.
+`npm run test:rules` runs the rules in Firebase's emulator, on your computer, against cases such as a stranger reading someone else's collection, a guest approving themselves, a pending guest syncing, a count going down, and a write from the old app. It also runs the app's own Firebase calls through a request, an approval and a removal. It needs Java and `npm install`, and the first run downloads the emulator. It never touches your Firebase project.

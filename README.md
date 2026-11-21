@@ -27,7 +27,11 @@ Any static host, such as GitHub Pages or Netlify, works too.
 
 The app saves records in the browser's `localStorage`, so each browser and device has its own copy. **Export backup** at the bottom of the Collection page saves a JSON file of your records and wishlist. To load it somewhere else, tap **Import** and choose the file. Importing a backup merges it with what's there and skips albums you already have.
 
-To keep the same collection on your phone and your computer, set up sync with Firebase. [Set up sync with Firebase](docs/firebase-setup.md) walks through it. You then tap the cloud button at the top right and sign in with Google, and each device syncs when you sign in and when you tap **Sync now**. The button shows how sync is doing without opening it.
+To keep the same collection on your phone and your computer, set up sync with Firebase. [Set up sync with Firebase](docs/firebase-setup.md) walks through it. You then tap the cloud button at the top right and sign in with Google. After that, each device syncs on its own: when the app opens, when you switch back to it, a few seconds after you change something, and when it comes back online. **Sync now** syncs at once. The button shows how sync is doing without opening it, including changes that are waiting and a device that is offline.
+
+A sync first reads one small document that counts the changes to each part of the collection, then reads only the parts that changed. A sync with nothing new costs one read on Firebase's free plan, and adding a record costs three. A friend's syncs cost a few more. [What it costs](docs/firebase-setup.md#what-it-costs) has the numbers.
+
+**If the rules you published in the Firebase console don't mention `versions`, publish the new ones from `firestore.rules` once this version of the app is live.** Until you do, syncs fail with "Firebase didn't allow that." [Update the rules after an app update](docs/firebase-setup.md#update-the-rules-after-an-app-update) has the steps.
 
 Friends and family can sync their own collections through your Firebase project too. They sign in and tap **Request access**, and you approve or deny each request from the same window. You can remove someone's access later. Each person syncs a separate collection, and nobody can read anyone else's. The access rules you publish in the Firebase console enforce this, and they're the only place your account id goes.
 
@@ -103,6 +107,8 @@ npm run test:rules   # the access rules, in Firebase's emulator
 ```
 
 The rules tests need Java and `npm install`. They start Firebase's Auth and Firestore emulators on your computer, which download on the first run, and never reach a real Firebase project. They check `firestore.rules` as it is in the repository, with a test account standing in for your id, and run the app's own Firebase calls through a request, an approval and a removal.
+
+To measure what each kind of sync reads, run `scripts/sync-reads/measure.js` in the emulator. Its first lines show the command.
 
 The browser tests need Playwright (`npm install`, then `npx playwright install chromium`). They answer MusicBrainz calls with fixed sample data, so they run offline and give the same result every time. Set `SCREENSHOT_DIR=some/folder` to save screenshots of each view.
 
