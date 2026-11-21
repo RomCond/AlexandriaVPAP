@@ -898,6 +898,27 @@ test('an access check that failed offline runs again once back online, then sync
   assert.deepEqual([sync.state.access, sync.state.problem, service.writes.length], ['owner', null, 1]);
 });
 
+test('rules that refuse an account that still has access keep the problem in view and stop automatic syncs', async () => {
+  const device = await autoDevice();
+  device.service.failExchange = firebaseError('permission-denied');
+  device.store.add({ artist: 'Can', title: 'Tago Mago' });
+  await device.env.advance(Sync.AUTO.CHANGE_DELAY);
+  assert.deepEqual([device.sync.state.access, device.sync.state.problem.kind], ['owner', 'notAllowed']);
+  let tries = 0;
+  const exchange = device.service.exchange;
+  device.service.exchange = (plan) => {
+    tries += 1;
+    return exchange(plan);
+  };
+  device.store.add({ artist: 'Can', title: 'Future Days' });
+  await device.env.fire('visible');
+  await device.env.advance(3600000);
+  assert.deepEqual([tries, device.sync.state.problem.kind], [0, 'notAllowed']);
+  device.service.failExchange = null;
+  await device.sync.syncNow();
+  assert.deepEqual([tries, device.sync.state.problem, device.sync.state.waiting], [1, null, false]);
+});
+
 test('signing out stops automatic syncs', async () => {
   const device = await autoDevice();
   device.store.add({ artist: 'Can', title: 'Tago Mago' });

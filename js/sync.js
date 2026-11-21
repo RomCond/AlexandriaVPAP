@@ -314,7 +314,8 @@
    * that syncs, when it comes back into view, and CHANGE_DELAY after this device's records change.
    * Nothing syncs while the browser says it is offline, and it syncs once it is back. Then
    * state.offline says the browser is offline, and state.waiting says this device has changes it
-   * hasn't synced. A used-up quota or a collection too big to sync stops automatic syncs until Sync now.
+   * hasn't synced. A used-up quota, a collection too big to sync, or rules that refuse an account
+   * that still has access stop automatic syncs until Sync now.
    */
   function startSync(store, { config, service, loadService = firebaseService, auto = null } = {}) {
     const listeners = new Set();
@@ -442,7 +443,15 @@
         cancel();
       } else if (code === 'permission-denied') {
         // Access may have been removed. Checking costs a read or two, and a removed account stops here.
+        // An account that still has access was refused by the rules, such as rules not yet updated
+        // for this version of the app, so the problem stays and automatic syncs stop until Sync now.
+        const problem = state.problem;
         await refresh(false);
+        if (SYNCS.has(state.access)) {
+          stopped = true;
+          cancel();
+          if (!state.problem) set({ problem });
+        }
       } else {
         schedule(AUTO.RETRY[Math.min(failures, AUTO.RETRY.length - 1)]);
         failures += 1;
