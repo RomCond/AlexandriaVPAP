@@ -3,6 +3,7 @@
 Record Catalog is a small web app that tracks the vinyl records you own and the ones you're looking for.
 
 - **Add records fast.** One search box takes part of an album or artist name, like "ok comp" or "radiohead kid". It also takes the barcode from the sleeve. Matches show as you type. Records that match every word come first, a small typo still matches, and a well-known album ranks above an obscure one with the same name. When what you type starts or ends with an artist's name, a line above the results, like "Radiohead · Artist · See all albums", opens that artist's discography. Search lists only vinyl. Each album or single that came out on vinyl gets one line, however many pressings it has. Studio albums show even when MusicBrainz lists no vinyl pressing for them, marked "Vinyl not confirmed". A barcode for a CD or cassette gets a message saying so instead of a result. Search includes LPs and 12" records, and leaves out 45s (7") and 10" records unless you tick **Include 45s and 10" records** on the Add page. The **45s and 10"** chip in the discography is the same setting. One tap adds a record, and the app fills in its year and cover art. You can add anything that isn't in the database by hand. You keep one copy per album, so an album you already have shows "In collection" instead of an Add button. A deluxe edition counts as its own album.
+- **Scan a barcode.** On a phone, tap **Scan barcode** on the Add page and point the camera at the barcode on the sleeve. The app searches for it as if you had typed the numbers. The button shows in any browser that lets the page use the camera. If you block the camera, the app says how to allow it. If it reads nothing for 8 seconds, it suggests how to hold the record.
 - **Import what you have.** If your records are already in a note or a spreadsheet, tap **Import** on the Collection page. Paste a list with one record per line, like `Steely Dan - Aja`, or choose a file: a text list, an Excel or CSV spreadsheet, or a backup from this app. The app adds the records all at once, then looks each one up on MusicBrainz in the background for its cover, year and spelling. See [Importing records](#importing-records).
 - **Browse your collection.** The buttons next to the search box switch between covers, three across on a phone, and a slim list. The app remembers your choice. The collection groups records under the first letter of the artist's name, ignoring a leading "The". On a list of more than 20 records sorted by artist or title, a strip of letters shows on the right side. Tap a letter, or slide a finger along the strip, to jump to it. **Filter** opens the format filter and the sort order: artist, recently added, year (grouped by decade) or title. Tap a record to edit or delete it, or to open the artist's discography.
 - **Pick one at random.** You can limit the pick to a format or an artist. The app avoids repeating any of your last five picks. The background behind the pick is a gradient from the main color of its cover, and the top of a record's edit screen uses the same gradient.
@@ -10,6 +11,8 @@ Record Catalog is a small web app that tracks the vinyl records you own and the 
 - **Keep a wishlist.** The Collection tab switches between your records and your wishlist. Tap **Got it** on a wishlist record to move it into your collection. Adding a record any other way also takes it off the wishlist.
 
 Lookups use [MusicBrainz](https://musicbrainz.org) and the [Cover Art Archive](https://coverartarchive.org). Both are free and need no API key. To read a cover's main color, the app needs the image server to allow cross-origin reads. If it doesn't, the app uses the record's placeholder color. The app reads each cover's color once and saves it with the record, and backups include it. Covers load at 500px in lists and the cover grid, and at 1200px for the random pick. Those sizes keep them sharp on phone screens. When the collection has already loaded a cover, or its color is already saved, the random pick shows the 500px cover first and fades the 1200px one in over it. A cover the collection has loaded shows straight away.
+
+Chrome on Android reads barcodes itself. Other browsers, such as Safari on iPhone and Firefox, can't, so the first scan in them loads the [barcode-detector](https://github.com/Sec-ant/barcode-detector) library from jsDelivr. That is a script and a WebAssembly file of about 15 KB and 410 KB compressed. The app asks for exact versions and gives the browser a SHA-384 hash for each file, so the browser refuses a file that has changed. The app fetches the WebAssembly file itself, rather than letting the library fetch it, so that the browser checks that hash too. If the library can't load, the app says so and tries again on the next scan.
 
 The colors are electric blue on cool white, or near-black in dark mode. The app follows the phone's light or dark setting. Headings use Inter Tight and text uses Inter, both from Google Fonts. Without a connection, they fall back to the system font.
 
@@ -22,6 +25,8 @@ npm start   # python3 -m http.server 8080, then open http://localhost:8080
 ```
 
 Any static host, such as GitHub Pages or Netlify, works too.
+
+Browsers allow the camera only on HTTPS pages and on `localhost`. A phone that opens `npm start` at your computer's address on Wi-Fi gets plain HTTP, so **Scan barcode** doesn't show. To try scanning on a phone, use a host with HTTPS. On Android, you can instead forward the port from `chrome://inspect` on your computer so the phone opens the app at `localhost:8080`.
 
 ## Where the data lives
 
@@ -90,6 +95,7 @@ css/styles.css        styles, light and dark
 js/store.js           records, backups, caching, and the matching logic
 js/xlsx.js            reads the sheets of an Excel file
 js/musicbrainz.js     MusicBrainz and Cover Art Archive client
+js/scanner.js         camera barcode reading, with a fallback reader from jsDelivr
 js/sync.js            sync between devices through Firebase
 js/sync-config.js     your Firebase project's web config
 js/app.js             the UI
@@ -110,6 +116,6 @@ The rules tests need Java and `npm install`. They start Firebase's Auth and Fire
 
 To measure what each kind of sync reads, run `scripts/sync-reads/measure.js` in the emulator. Its first lines show the command.
 
-The browser tests need Playwright (`npm install`, then `npx playwright install chromium`). They answer MusicBrainz calls with fixed sample data, so they run offline and give the same result every time. Set `SCREENSHOT_DIR=some/folder` to save screenshots of each view.
+The browser tests need Playwright (`npm install`, then `npx playwright install chromium`). They answer MusicBrainz calls with fixed sample data, so they run offline and give the same result every time. Chromium on Linux has no barcode reader of its own, so the scanning tests stand in for one, and a barcode drawn on a canvas stands in for the camera. The fallback reader tests answer jsDelivr from the `barcode-detector` package that `npm install` puts in `node_modules`, and are skipped without it. Set `SCREENSHOT_DIR=some/folder` to save screenshots of each view.
 
 The Excel files in `tests/fixtures` come from xlsxwriter, openpyxl and LibreOffice. To make them again, run `python3 tests/fixtures/make-xlsx-fixtures.py`.

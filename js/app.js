@@ -7,6 +7,7 @@
 
   const S = RC.store;
   const mb = RC.mb;
+  const scanner = RC.scanner;
   const store = S.createStore(browserStorage());
 
   // ---------- Helpers ----------
@@ -690,6 +691,43 @@
     }
     event.target.elements.q.blur(); // closes the phone keyboard so the results are visible
     runSearch(text);
+  }
+
+  const SCAN_HINT_MS = 8000;
+  const SCAN_HINT = "Nothing read yet. Fill the frame with the barcode, hold it flat and still, and find good light. Or tap Cancel and type the numbers under it.";
+  const SCAN_ERRORS = {
+    NotAllowedError: 'The camera is blocked for this site. Allow it in your browser settings and tap Scan barcode again, or type the barcode.',
+    NotFoundError: 'No camera found. Type the barcode instead.',
+    NotReadableError: 'Another app is using the camera. Close it and tap Scan barcode again.',
+    NetworkError: "Couldn't load the barcode reader. Check your connection and tap Scan barcode again, or type the barcode.",
+  };
+  const SCAN_FAILED = "Scanning didn't work in this browser. Type the barcode instead.";
+  let scanController = null;
+  let scanHintTimer = null;
+
+  async function scan() {
+    const controller = new AbortController();
+    scanController = controller;
+    setStatus('#scan-hint', '');
+    $('#scan-dialog').showModal();
+    try {
+      const barcode = await scanner.read($('#scan-video'), controller.signal);
+      stopScan();
+      $('#search-form').elements.q.value = barcode;
+      runSearch(barcode);
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      stopScan();
+      setStatus('#search-status', SCAN_ERRORS[e.name] || SCAN_FAILED, 'error');
+    }
+  }
+
+  // Aborts as the person taps Cancel, not on the dialog's close event, which comes a moment later.
+  // A barcode read in between would otherwise be searched for.
+  function stopScan() {
+    clearTimeout(scanHintTimer);
+    scanController.abort();
+    $('#scan-dialog').close();
   }
 
   function onManualSubmit(event) {
@@ -1638,6 +1676,14 @@
 
   $('#search-form').addEventListener('submit', onSearchSubmit);
   $('#search-form').elements.q.addEventListener('input', onSearchInput);
+  $('#scan-btn').hidden = !scanner.supported();
+  $('#scan-btn').addEventListener('click', scan);
+  $('#scan-cancel').addEventListener('click', stopScan);
+  $('#scan-dialog').addEventListener('cancel', stopScan); // Escape, or the back gesture on Android
+  $('#scan-video').addEventListener('playing', () => {
+    clearTimeout(scanHintTimer);
+    scanHintTimer = setTimeout(() => setStatus('#scan-hint', SCAN_HINT), SCAN_HINT_MS);
+  });
   $('#manual-form').addEventListener('submit', onManualSubmit);
   $('#add-format').addEventListener('change', (e) => store.setPref('addFormat', e.target.value));
 

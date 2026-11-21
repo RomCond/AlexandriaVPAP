@@ -237,6 +237,11 @@ async function openApp(browser, { setup, ...options } = {}) {
   // Fonts come from Google Fonts in real use; an empty stylesheet keeps the test offline.
   await context.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   if (setup) await setup(context);
+  const cdnCalls = [];
+  await context.route(/^https:\/\/(cdn|fastly)\.jsdelivr\.net\//, (route) => {
+    cdnCalls.push(route.request().url());
+    fulfillCdn(route, fromNodeModules(route.request().url()));
+  });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (err) => errors.push(err.message));
@@ -244,7 +249,7 @@ async function openApp(browser, { setup, ...options } = {}) {
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) errors.push(msg.text());
   });
   await page.goto(PAGE_URL);
-  return { context, page, errors, mbCalls, coverCalls, hold, firebaseCalls };
+  return { context, page, errors, mbCalls, coverCalls, hold, firebaseCalls, cdnCalls };
 }
 
 /*
@@ -367,6 +372,29 @@ async function addByHand(page, artist, title) {
   await form.locator('[name=title]').fill(title);
   await form.locator('button[type=submit]').click();
 }
+
+// jsDelivr serves npm packages as published, so the tests answer from the same packages in
+// node_modules (devDependencies), and only when the installed version is the one asked for.
+function fromNodeModules(url) {
+  const match = /^\/npm\/([^@/]+)@([^/]+)\/(.+)$/.exec(new URL(url).pathname);
+  if (!match) return null;
+  const [, name, version, file] = match;
+  const dir = path.join(__dirname, '..', 'node_modules', name);
+  try {
+    if (JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version !== version) return null;
+    return fs.readFileSync(path.join(dir, file));
+  } catch (e) {
+    return null;
+  }
+}
+
+function fulfillCdn(route, body) {
+  if (!body) return route.fulfill({ status: 404, body: '' });
+  const contentType = route.request().url().endsWith('.wasm') ? 'application/wasm' : 'text/javascript';
+  return route.fulfill({ status: 200, body, contentType, headers: { 'Access-Control-Allow-Origin': '*' } });
+}
+
+const FALLBACK_INSTALLED = fs.existsSync(path.join(__dirname, '..', 'node_modules', 'barcode-detector', 'package.json'));
 
 async function shot(page, name) {
   if (!SHOTS) return;
@@ -1435,6 +1463,233 @@ test('imports spreadsheets saved as Excel or CSV, and says what to do with a Num
     const nevermind = (await records()).find((r) => r.title === 'Nevermind');
     assert.deepEqual([nevermind.artist, nevermind.year, nevermind.notes], ['Nirvana', null, 'Label: DGC; Catalog number: DGC-24425; Pressing year: 1991; Media condition: VG+']);
 
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+// Chromium on Linux has no BarcodeDetector and the test has no camera. The camera here films a
+// sleeve drawn on a canvas, with the barcode in real EAN-13 bars that the fallback reader can read.
+// builtIn lists the formats a stand-in for the browser's own detector reads, or is null for none.
+// Like the real one, the stand-in reports only the formats it was asked for, a few frames in.
+// With holdRead, its first read waits until the test calls releaseRead().
+function fakeCamera({ builtIn = ['qr_code', 'ean_13', 'upc_a'], cameraError = null, barcode = '0724352775323', holdRead = false } = {}) {
+  return (context) => context.addInitScript((fake) => {
+    window.cameraStreams = [];
+    const sleeve = [{ format: 'qr_code', rawValue: 'https://example.com/promo' }, { format: 'ean_13', rawValue: fake.barcode }];
+    if (fake.builtIn) {
+      window.BarcodeDetector = class {
+        static async getSupportedFormats() { return fake.builtIn; }
+
+        constructor({ formats }) {
+          this.formats = formats;
+          this.frames = 0;
+        }
+
+        async detect(video) {
+          this.frames += 1;
+          const seen = () => sleeve.filter((code) => this.formats.includes(code.format));
+          if (fake.holdRead) {
+            window.readHeld = true;
+            return new Promise((resolve) => { window.releaseRead = () => resolve(seen()); });
+          }
+          if (!fake.barcode || this.frames < 4 || video.readyState < 2) return [];
+          return seen();
+        }
+      };
+    }
+    navigator.mediaDevices.getUserMedia = async () => {
+      if (fake.cameraError) throw new DOMException('Camera unavailable', fake.cameraError);
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 360;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000';
+      if (fake.barcode) [...ean13Bars(fake.barcode)].forEach((bar, i) => bar === '1' && ctx.fillRect(130 + i * 4, 80, 4, 200));
+      const stream = canvas.captureStream();
+      window.cameraStreams.push(stream);
+      return stream;
+    };
+
+    // The 95 modules of an EAN-13 barcode, 1 for a black bar.
+    function ean13Bars(digits) {
+      const L = ['0001101', '0011001', '0010011', '0111101', '0100011', '0110001', '0101111', '0111011', '0110111', '0001011'];
+      const R = L.map((code) => code.replace(/./g, (bit) => (bit === '0' ? '1' : '0')));
+      const G = R.map((code) => [...code].reverse().join(''));
+      const PARITY = ['LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL', 'LGLLGG', 'LGGLLG', 'LGGGLG', 'LGLGLG', 'LGLGGL', 'LGGLGL'];
+      const [first, ...rest] = [...digits].map(Number);
+      const left = rest.slice(0, 6).map((digit, i) => (PARITY[first][i] === 'L' ? L : G)[digit]).join('');
+      const right = rest.slice(6).map((digit) => R[digit]).join('');
+      return `101${left}01010${right}101`;
+    }
+  }, { builtIn, cameraError, barcode, holdRead });
+}
+
+const noCamera = (context) => context.addInitScript(() => Object.defineProperty(navigator, 'mediaDevices', { value: undefined }));
+const cameraOff = (page) => page.evaluate(() => window.cameraStreams.every((stream) => stream.getTracks().every((track) => track.readyState === 'ended')));
+const PHONE = { viewport: { width: 375, height: 760 } };
+const needsFallback = (!chromium && 'playwright is not installed') || (!FALLBACK_INSTALLED && 'the fallback barcode reader is not in node_modules (npm install)');
+
+test('offers Scan barcode wherever the page can use the camera', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    {
+      const { context, page } = await openApp(browser, { ...PHONE, setup: noCamera });
+      await openTab(page, 'add');
+      assert.ok(await page.locator('#scan-btn').isHidden(), 'no Scan button without camera access');
+      await context.close();
+    }
+    for (const [name, setup] of [['no built-in reader', undefined], ['a built-in reader for QR codes only', fakeCamera({ builtIn: ['qr_code'] })], ['a built-in reader', fakeCamera()]]) {
+      const { context, page, errors, cdnCalls } = await openApp(browser, { ...PHONE, setup });
+      await openTab(page, 'add');
+      assert.ok(await page.locator('#scan-btn').isVisible(), `Scan shows with ${name}`);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 0, `the Add page scrolls sideways by ${overflow}px with the Scan button`);
+      assert.deepEqual(cdnCalls, [], `nothing loads before the first scan, with ${name}`);
+      assert.deepEqual(errors, []);
+      await shot(page, 'scan-01-button');
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('scans with the browser\'s own barcode reader and loads no other', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera() });
+    await openTab(page, 'add');
+    await page.click('#scan-btn');
+    await page.locator('#scan-dialog').waitFor();
+    await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+    assert.ok(await page.locator('#scan-dialog').isHidden());
+    assert.equal(await page.locator('#search-form [name=q]').inputValue(), '0724352775323');
+    assert.equal(mbCalls.at(-1).searchParams.get('query'), 'barcode:0724352775323');
+    assert.ok(await cameraOff(page), 'the camera is off after a read');
+    assert.deepEqual(cdnCalls, [], 'the fallback reader is not loaded');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('scans with the fallback reader where the browser has none for record barcodes', { skip: needsFallback }, async () => {
+  const browser = await chromium.launch();
+  try {
+    for (const [name, builtIn] of [['no built-in reader', null], ['a built-in reader for QR codes only', ['qr_code']]]) {
+      const { context, page, errors, mbCalls, cdnCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ builtIn }) });
+      await openTab(page, 'add');
+      await page.click('#scan-btn');
+      await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+      assert.ok(await page.locator('#scan-dialog').isHidden());
+      assert.equal(await page.locator('#search-form [name=q]').inputValue(), '0724352775323', name);
+      assert.equal(mbCalls.at(-1).searchParams.get('query'), 'barcode:0724352775323');
+      assert.ok(await cameraOff(page), 'the camera is off after a read');
+      const loaded = cdnCalls.map((url) => new URL(url)).map((url) => url.host + url.pathname).sort();
+      assert.deepEqual(loaded, [
+        'cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/iife/ponyfill.js',
+        'cdn.jsdelivr.net/npm/zxing-wasm@3.1.6/dist/reader/zxing_reader.wasm',
+      ], `the pinned script and WebAssembly load once, with ${name}`);
+
+      await page.click('#scan-btn');
+      await page.locator('#scan-dialog').waitFor({ state: 'hidden' });
+      assert.equal(cdnCalls.length, 2, 'a second scan loads nothing again');
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('says when the fallback reader can\'t load, and tries again on the next scan', { skip: needsFallback }, async () => {
+  const browser = await chromium.launch();
+  // Each change leaves a file that still works, so only the hash check can refuse it. The WebAssembly
+  // gets an extra custom section: id 0, 5 bytes long, named "test".
+  const appended = (extra) => (route) => fulfillCdn(route, Buffer.concat([fromNodeModules(route.request().url()), extra]));
+  const failures = [
+    ['the connection drops', /jsdelivr/, (route) => route.abort('internetdisconnected')],
+    ['the script changed on the CDN', /ponyfill\.js$/, appended(Buffer.from('\n'))],
+    ['the WebAssembly changed on the CDN', /\.wasm$/, appended(Buffer.from([0, 5, 4, ...Buffer.from('test')]))],
+  ];
+  try {
+    for (const [name, pattern, fail] of failures) {
+      const { context, page, mbCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ builtIn: null }) });
+      await context.route(pattern, fail);
+      await openTab(page, 'add');
+      await page.click('#scan-btn');
+      await page.locator('#search-status[data-kind=error]', { hasText: "Couldn't load the barcode reader." }).waitFor();
+      assert.ok(await page.locator('#scan-dialog').isHidden(), name);
+      assert.ok(await cameraOff(page), `the camera is off when ${name}`);
+      assert.equal(mbCalls.length, 0);
+
+      await context.unroute(pattern, fail);
+      await page.click('#scan-btn');
+      await page.locator('#search-results .result', { hasText: 'Kid A' }).waitFor();
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Cancel wins over a barcode read at the same moment', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const { context, page, errors, mbCalls } = await openApp(browser, { ...PHONE, setup: fakeCamera({ holdRead: true }) });
+    await openTab(page, 'add');
+    await page.click('#scan-btn');
+    await page.waitForFunction(() => window.readHeld);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(() => window.releaseRead());
+    await page.waitForFunction(() => window.cameraStreams.every((stream) => stream.getTracks().every((track) => track.readyState === 'ended')));
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#search-form [name=q]').inputValue(), '', 'a cancelled scan fills nothing in');
+    assert.equal(mbCalls.length, 0, 'a cancelled scan searches nothing');
+    assert.ok(await page.locator('#search-status').isHidden(), 'a cancelled scan shows no message');
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('explains a blocked camera, and helps when nothing is read', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  const phone = { viewport: { width: 375, height: 760 } };
+  try {
+    {
+      const { context, page, errors, mbCalls } = await openApp(browser, { ...phone, setup: fakeCamera({ cameraError: 'NotAllowedError' }) });
+      await openTab(page, 'add');
+      await page.click('#scan-btn');
+      await page.locator('#search-status[data-kind=error]', { hasText: 'The camera is blocked for this site.' }).waitFor();
+      assert.ok(await page.locator('#scan-dialog').isHidden());
+      assert.equal(mbCalls.length, 0);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+
+    const { context, page, errors, mbCalls } = await openApp(browser, { ...phone, setup: fakeCamera({ barcode: null }) });
+    await page.clock.install();
+    await page.reload();
+    await openTab(page, 'add');
+    await page.click('#scan-btn');
+    await page.locator('#scan-dialog').waitFor();
+    assert.ok(await page.locator('#scan-hint').isHidden(), 'no hint straight away');
+    await page.clock.runFor(9000);
+    await page.locator('#scan-hint', { hasText: 'Nothing read yet.' }).waitFor();
+    await shot(page, 'scan-02-nothing-read');
+    await page.keyboard.press('Escape');
+    assert.ok(await page.locator('#scan-dialog').isHidden());
+    await page.clock.runFor(500);
+    assert.ok(await cameraOff(page), 'the camera is off after Escape');
+    assert.equal(mbCalls.length, 0);
     assert.deepEqual(errors, []);
     await context.close();
   } finally {
