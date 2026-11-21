@@ -513,6 +513,7 @@
     let liveBroken = false; // the listener failed, until the next sync, view or reconnect
     let hidden = Boolean(auto) && typeof auto.visible === 'function' && !auto.visible();
     let hideTimer = null;
+    let signingOut = false;
 
     const canLive = () => Boolean(auto) && Boolean(active) && typeof active.watchVersions === 'function';
 
@@ -525,7 +526,7 @@
      * It keeps running while offline, since Firebase picks it up again by itself on reconnecting.
      */
     function updateLive() {
-      const want = canLive() && mayAuto() && !hidden && !liveBroken ? state.user.id : null;
+      const want = canLive() && mayAuto() && !hidden && !liveBroken && !signingOut ? state.user.id : null;
       if (watching === want) return;
       if (unwatch) {
         const stopListening = unwatch;
@@ -669,14 +670,19 @@
     }
 
     // Signing out keeps this device's records. It only stops syncing them, and forgets what it last saw.
+    // The listener stops first, so Firebase never holds one for an account that has signed out.
     async function signOut() {
       if (!active || busy()) return;
+      signingOut = true;
+      set({});
       try {
         await active.signOut();
       } catch (error) {
+        signingOut = false;
         set({ problem: problemOf(error) });
         return;
       }
+      signingOut = false;
       cancel();
       stopped = false;
       store.setPref('syncedAt', null);

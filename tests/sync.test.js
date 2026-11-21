@@ -1183,6 +1183,25 @@ test('the listener stops when access is removed, whether a sync or the listener 
   }
 });
 
+test('signing out stops the listener before it signs out, and a sign-out that fails keeps it', async () => {
+  const server = memoryServer();
+  const pc = await autoDevice({ server });
+  const signOut = pc.service.signOut;
+  let listening = null;
+  pc.service.signOut = async () => {
+    listening = server.watchersOf(OWNER.id);
+    throw firebaseError('unavailable');
+  };
+  await pc.sync.signOut();
+  assert.deepEqual([listening, pc.sync.state.live, server.watchersOf(OWNER.id)], [0, true, 1]);
+  pc.service.signOut = async () => {
+    listening = server.watchersOf(OWNER.id);
+    return signOut();
+  };
+  await pc.sync.signOut();
+  assert.deepEqual([listening, pc.sync.state.live, server.watchersOf(OWNER.id)], [0, false, 0]);
+});
+
 test('enabled: false starts no listener', async () => {
   const service = memoryService();
   service.user = OWNER;
