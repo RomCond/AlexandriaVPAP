@@ -587,7 +587,8 @@ test('a device whose records went missing reads their buckets again, so it never
   const storage = S.memoryStorage();
   const store = S.createStore(storage);
   const service = Object.assign(memoryService({ server }), { user: OWNER });
-  store.addMany([{ artist: 'Steely Dan', title: 'Aja' }, { artist: 'Can', title: 'Tago Mago' }, { artist: 'Faust', title: 'IV' }]);
+  const [a, b, c] = idsIn(null, 3);
+  store.addMany([{ id: a, artist: 'Steely Dan', title: 'Aja' }, { id: b, artist: 'Can', title: 'Tago Mago' }, { id: c, artist: 'Faust', title: 'IV' }]);
   await Sync.syncOnce(store, service, OWNER.id);
   // The records are lost on this device, and the memory of the last sync stays.
   storage.setItem(S.KEYS.records, '[]');
@@ -602,15 +603,18 @@ test('a device whose records went missing reads their buckets again, so it never
 test('a memory from another account is ignored, and signing out forgets it', async () => {
   const server = memoryServer();
   server.access.set(ANA.id, { id: ANA.id, status: 'approved' });
-  const storage = S.memoryStorage();
-  const store = S.createStore(storage);
-  store.add({ artist: 'Can', title: 'Tago Mago' });
-  const owner = await device(OWNER, server);
-  await owner.sync.syncNow();
-  const service = Object.assign(memoryService({ account: ANA, server }), { user: ANA });
+  const anaPc = S.createStore(S.memoryStorage());
+  anaPc.add({ artist: 'Can', title: 'Tago Mago' });
+  await Sync.syncOnce(anaPc, Object.assign(memoryService({ account: ANA, server }), { user: ANA }), ANA.id);
+  const owner = await device(OWNER, server, [['Steely Dan', 'Aja']]);
+
+  // A device that last synced as the owner, now signed in as Ana, with the owner's records gone.
+  const store = S.createStore(S.memoryStorage());
   store.setPref(Sync.MEMORY, owner.store.getPref(Sync.MEMORY));
+  const service = Object.assign(memoryService({ account: ANA, server }), { user: ANA });
   await Sync.syncOnce(store, service, ANA.id);
-  assert.equal(service.reads.at(-1), 17);
+  assert.equal(service.reads.at(-1), 17, "the owner's memory says nothing about Ana's buckets");
+  assert.deepEqual(titles(store), ['Tago Mago']);
   assert.equal(store.getPref(Sync.MEMORY).account, ANA.id);
   await owner.sync.signOut();
   assert.equal(owner.store.getPref(Sync.MEMORY), null);
@@ -710,9 +714,15 @@ async function autoDevice({ account = OWNER, server = memoryServer(), env = fake
 
 test('with automatic syncing, opening the page syncs once the access check says the account may', async () => {
   const server = memoryServer();
+  const pc = S.createStore(S.memoryStorage());
+  pc.add({ artist: 'Steely Dan', title: 'Aja' });
+  await Sync.syncOnce(pc, Object.assign(memoryService({ server }), { user: OWNER }), OWNER.id);
   const owner = await autoDevice({ server });
   assert.deepEqual([owner.sync.state.phase, owner.sync.state.access, owner.syncs()], ['idle', 'owner', 1]);
   assert.notEqual(owner.sync.state.syncedAt, null);
+  assert.deepEqual(titles(owner.store), ['Aja']);
+  await owner.env.advance(3600000);
+  assert.deepEqual([owner.syncs(), owner.sync.state.waiting], [1, false], 'taking in the records it got starts no further sync');
 
   server.access.set(ANA.id, { id: ANA.id, status: 'pending' });
   const ana = await autoDevice({ account: ANA, server });
