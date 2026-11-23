@@ -1783,7 +1783,7 @@ test('explains a blocked camera, and helps when nothing is read', { skip: !chrom
   }
 });
 
-test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting', { skip: !chromium && 'playwright is not installed' }, async () => {
+test('uses Unbounded and Inter, and follows the phone\'s light or dark setting', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
     for (const [colorScheme, background] of [['light', 'rgb(243, 245, 251)'], ['dark', 'rgb(7, 9, 15)']]) {
@@ -1793,7 +1793,7 @@ test('uses Inter Tight and Inter, and follows the phone\'s light or dark setting
         body: getComputedStyle(document.body).fontFamily,
         background: getComputedStyle(document.body).backgroundColor,
       }));
-      assert.match(styles.heading, /^"?Inter Tight"?,/);
+      assert.match(styles.heading, /^"?Unbounded"?,/);
       assert.match(styles.body, /^"?Inter"?,/);
       assert.equal(styles.background, background, `${colorScheme} background`);
       assert.equal(await page.locator('#theme-btn, #look-dialog').count(), 0, 'there is no theme picker');
