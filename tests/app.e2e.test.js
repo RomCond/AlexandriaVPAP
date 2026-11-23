@@ -258,6 +258,7 @@ async function openApp(browser, { setup, ...options } = {}) {
  * firestore.rules does, with fake.owner as the owner. `install(account)` sets up a browser context as
  * a device that signs in as that account. Every device installed from the same fake shares the
  * project. Set `fail` to a Firebase error code to make every call after sign-in fail with it.
+ * `install(account, { signedIn: true })` opens the page already signed in.
  * `calls` lists every call any device made.
  */
 const OWNER = { id: 'test-account-id', name: 'Site Owner', email: 'owner@example.com' };
@@ -265,8 +266,10 @@ const ANA = { id: 'ana-account-id', name: 'Ana Lima', email: 'ana@example.com' }
 const BEN = { id: 'ben-account-id', name: 'Ben Ortiz', email: 'ben@example.com' };
 
 function fakeSyncService() {
-  const fake = { owner: OWNER, buckets: new Map(), access: new Map(), fail: null, calls: [] };
+  const fake = { owner: OWNER, buckets: new Map(), versions: new Map(), access: new Map(), fail: null, calls: [] };
   const bucketsOf = (id) => fake.buckets.get(id) || fake.buckets.set(id, new Map()).get(id);
+  // Each bucket is { state, version }, and the version document counts each bucket's writes, as in Firebase.
+  fake.texts = (id) => [...bucketsOf(id).values()].map((bucket) => bucket.state);
   const moves = { pending: ['approved', 'denied'], approved: ['denied'] };
   const denied = { error: 'permission-denied' };
 
@@ -277,10 +280,14 @@ function fakeSyncService() {
     const isOwner = account.id === OWNER.id;
     const mine = fake.access.get(account.id);
     const syncs = isOwner || (mine && mine.status === 'approved');
-    if (action === 'read') return syncs ? { buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
+    if (action === 'read') return syncs ? { versions: fake.versions.get(account.id) || null, buckets: Object.fromEntries(bucketsOf(account.id)) } : denied;
     if (action === 'write') {
       if (!syncs) return denied;
-      for (const [id, text] of Object.entries(arg)) bucketsOf(account.id).set(id, text);
+      const after = arg.versions || fake.versions.get(account.id);
+      const rises = Object.entries(arg.buckets).every(([id, bucket]) => bucket.version > ((bucketsOf(account.id).get(id) || {}).version || 0) && after && after[id] === bucket.version);
+      if (!rises) return denied;
+      for (const [id, bucket] of Object.entries(arg.buckets)) bucketsOf(account.id).set(id, bucket);
+      if (arg.versions) fake.versions.set(account.id, arg.versions);
       return {};
     }
     if (action === 'list') return isOwner ? { people: [...fake.access.values()] } : denied;
@@ -304,10 +311,11 @@ function fakeSyncService() {
     throw new Error(`fake sync has no ${action}`);
   }
 
-  fake.install = (account = OWNER) => async (context) => {
+  // `signedIn` starts the page with the account signed in, as Firebase restores a session.
+  fake.install = (account = OWNER, { signedIn = false } = {}) => async (context) => {
     await context.exposeFunction('fakeSync', (action, arg) => answer(account, action, arg));
-    await context.addInitScript(() => {
-      let user = null;
+    await context.addInitScript((restored) => {
+      let user = restored;
       const watchers = [];
       const tell = () => watchers.forEach((watcher) => watcher(user));
       const call = async (action, arg) => {
@@ -330,9 +338,11 @@ function fakeSyncService() {
             user = null;
             tell();
           },
-          async exchange(change) {
-            const stored = new Map(Object.entries((await call('read')).buckets));
-            await call('write', Object.fromEntries(change(stored)));
+          async exchange(plan) {
+            const { versions, buckets } = await call('read');
+            const ids = plan.need(versions);
+            const { buckets: writes, versions: next } = plan.change(versions, new Map(ids.map((id) => [id, buckets[id] || null])));
+            await call('write', { buckets: Object.fromEntries(writes), versions: next });
           },
           listAccess: async () => (await call('list')).people,
           readAccess: async () => (await call('mine')).access,
@@ -341,7 +351,7 @@ function fakeSyncService() {
           decideAccess: (id, status) => call('decide', { id, status }),
         },
       };
-    });
+    }, signedIn ? account : null);
   };
   return fake;
 }
@@ -1236,6 +1246,104 @@ test('sync says what went wrong, with the account id for setting up the rules', 
     assert.deepEqual(firebaseCalls, []);
     assert.deepEqual(errors, []);
     await context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('sync runs on its own: on opening, after changes, back in view and back online, until the quota runs out', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const phone = await openApp(browser, { setup: fake.install(), viewport: { width: 390, height: 844 } });
+    await addByHand(phone.page, 'Can', 'Tago Mago');
+    await openSync(phone.page);
+    await phone.page.click('#sync-sign-in');
+    await phone.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    await phone.page.click('#sync-close');
+
+    // The PC opens with the session Firebase kept, and a clock the test moves.
+    const pc = await openApp(browser, {
+      setup: async (context) => {
+        await context.clock.install();
+        await fake.install(OWNER, { signedIn: true })(context);
+      },
+    });
+    const { page, context } = pc;
+    await page.locator('#nav-count', { hasText: '1' }).waitFor({ timeout: 5000 });
+    assert.equal(await syncName(page), 'Sync: synced just now', 'opening the page synced, with no tap');
+    await page.clock.pauseAt(Date.now() + 60000);
+    const writes = () => fake.calls.filter((call) => call === 'write').length;
+    const reads = () => fake.calls.filter((call) => call === 'read').length;
+
+    await addByHand(page, 'Steely Dan', 'Aja');
+    assert.equal(await syncName(page), 'Sync: changes waiting to sync');
+    const before = writes();
+    await page.clock.runFor(4000);
+    assert.equal(writes(), before, 'not before the edits pause');
+    await page.clock.runFor(1500);
+    await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: synced just now');
+    assert.equal(writes(), before + 1);
+    assert.ok(fake.texts(OWNER.id).some((state) => state.includes('Aja')), 'the change reached the fake project');
+
+    await addByHand(phone.page, 'Faust', 'IV');
+    await openSync(phone.page);
+    await phone.page.click('#sync-now');
+    await phone.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    await phone.page.click('#sync-close');
+    const showAgain = () => page.evaluate(() => {
+      for (const state of ['hidden', 'visible']) {
+        Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }
+    });
+    const quietReads = reads();
+    await showAgain();
+    await page.clock.runFor(100);
+    assert.equal(reads(), quietReads, 'coming back right after a sync costs nothing');
+    await page.clock.runFor(30000);
+    await showAgain();
+    await page.clock.runFor(100);
+    await page.locator('#nav-count', { hasText: '3' }).waitFor({ timeout: 5000 });
+
+    await context.setOffline(true);
+    await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: offline');
+    await addByHand(page, 'Neu!', 'Neu!');
+    assert.equal(await syncName(page), 'Sync: offline, changes will sync when back online');
+    const offlineReads = reads();
+    await page.clock.runFor(120000);
+    await showAgain();
+    await page.clock.runFor(100);
+    assert.equal(reads(), offlineReads, 'nothing is tried while offline');
+    await shot(page, 'sync-offline');
+    await context.setOffline(false);
+    await page.clock.runFor(100);
+    await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: synced just now');
+    assert.ok(fake.texts(OWNER.id).some((state) => state.includes('Neu!')));
+
+    fake.fail = 'resource-exhausted';
+    await addByHand(page, 'Can', 'Future Days');
+    await page.clock.runFor(5500);
+    await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: something went wrong');
+    const stoppedCalls = fake.calls.length;
+    await addByHand(page, 'Can', 'Soon Over Babaluma');
+    await page.clock.runFor(3600000);
+    await showAgain();
+    await page.clock.runFor(100);
+    assert.equal(fake.calls.length, stoppedCalls, 'a used-up quota stops automatic syncs');
+    await openSync(page);
+    assert.match(await text(page, '#sync-problem'), /This site has used up today's free Firebase reads\./);
+
+    fake.fail = null;
+    await page.click('#sync-now');
+    await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#sync-problem').count(), 0);
+    assert.ok(fake.texts(OWNER.id).some((state) => state.includes('Soon Over Babaluma')), 'Sync now sent the waiting changes');
+
+    assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
+    assert.deepEqual([...pc.errors, ...phone.errors], []);
+    await pc.context.close();
+    await phone.context.close();
   } finally {
     await browser.close();
   }

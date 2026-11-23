@@ -46,19 +46,58 @@ service cloud.firestore {
       allow delete: if signedInAs(uid) && resource.data.status == 'pending';
     }
 
+    // A collection is 16 buckets, 0 to f, and a version document that counts each bucket's writes.
     // The owner's check costs no read. Everyone else's costs one read of their access document.
-    match /users/{uid}/sync/{bucket} {
+    match /users/{uid}/sync/{id} {
       function maySync() {
         return signedInAs(uid)
           && (isOwner() || get(/databases/$(database)/documents/access/$(uid)).data.status == 'approved');
       }
 
+      function buckets() {
+        return ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'];
+      }
+
+      function counter(value) {
+        return value is int && value >= 0;
+      }
+
+      // 16 counters, one for each bucket, and nothing else.
+      function counters(data) {
+        return data.keys().hasOnly(buckets()) && data.keys().hasAll(buckets())
+          && counter(data['0']) && counter(data['1']) && counter(data['2']) && counter(data['3'])
+          && counter(data['4']) && counter(data['5']) && counter(data['6']) && counter(data['7'])
+          && counter(data['8']) && counter(data['9']) && counter(data['a']) && counter(data['b'])
+          && counter(data['c']) && counter(data['d']) && counter(data['e']) && counter(data['f']);
+      }
+
+      // No counter goes down.
+      function noneGoDown(before, after) {
+        return after['0'] >= before['0'] && after['1'] >= before['1'] && after['2'] >= before['2'] && after['3'] >= before['3']
+          && after['4'] >= before['4'] && after['5'] >= before['5'] && after['6'] >= before['6'] && after['7'] >= before['7']
+          && after['8'] >= before['8'] && after['9'] >= before['9'] && after['a'] >= before['a'] && after['b'] >= before['b']
+          && after['c'] >= before['c'] && after['d'] >= before['d'] && after['e'] >= before['e'] && after['f'] >= before['f'];
+      }
+
       allow read: if maySync();
-      allow create, update: if maySync()
-        && bucket.matches('[0-9a-f]')
-        && request.resource.data.keys().hasOnly(['state'])
+
+      // A bucket holds its text, `state`, and its counter, `version`. Each write must raise the
+      // counter, and the version document must hold the new counter once the write is done, so it is
+      // written in the same transaction. A write without a counter, from the app before counters
+      // existed, is refused, so no device misses it. Checking the version document costs a read.
+      allow create, update: if id.matches('[0-9a-f]')
+        && request.resource.data.keys().hasOnly(['state', 'version'])
+        && request.resource.data.keys().hasAll(['state', 'version'])
         && request.resource.data.state is string
-        && request.resource.data.state.size() <= 400000;
+        && request.resource.data.state.size() <= 400000
+        && request.resource.data.version is int
+        && request.resource.data.version > (resource == null ? 0 : resource.data.get('version', 0))
+        && maySync()
+        && getAfter(/databases/$(database)/documents/users/$(uid)/sync/versions).data[id] == request.resource.data.version;
+
+      // The version document. A missing one is made again from the buckets' own counters.
+      allow create: if id == 'versions' && counters(request.resource.data) && maySync();
+      allow update: if id == 'versions' && counters(request.resource.data) && noneGoDown(resource.data, request.resource.data) && maySync();
     }
   }
 }

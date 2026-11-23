@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require('@firebase/rules-unit-testing');
-const { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, serverTimestamp, Timestamp, setLogLevel } = require('firebase/firestore');
+const { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, serverTimestamp, Timestamp, writeBatch, runTransaction, setLogLevel } = require('firebase/firestore');
 
 setLogLevel('silent');
 
@@ -40,6 +40,18 @@ const as = (who) => env.authenticatedContext(people[who].uid, people[who].token)
 const stranger = () => env.unauthenticatedContext().firestore();
 const bucket = (db, uid, id = '0') => doc(db, 'users', uid, 'sync', id);
 const access = (db, uid) => doc(db, 'access', uid);
+const versions = (db, uid) => doc(db, 'users', uid, 'sync', 'versions');
+const BUCKETS = [...'0123456789abcdef'];
+const counters = (changes = {}) => ({ ...Object.fromEntries(BUCKETS.map((id) => [id, 0])), ...changes });
+
+// Writes buckets, as { id: data }, and the version document, as the app does in one transaction.
+function syncWrite(db, uid, buckets, next) {
+  const batch = writeBatch(db);
+  for (const [id, data] of Object.entries(buckets)) batch.set(bucket(db, uid, id), data);
+  if (next) batch.set(versions(db, uid), next);
+  return batch.commit();
+}
+
 const request = (who) => ({ status: 'pending', name: people[who].token.name, email: people[who].token.email, requestedAt: serverTimestamp() });
 
 // Puts documents in place as the console would, without the rules.
@@ -136,55 +148,120 @@ test('a requester can withdraw a pending request, and only a pending one', async
 
 test('the owner syncs without an access document', async () => {
   const db = as('owner');
-  await assertSucceeds(setDoc(bucket(db, OWNER, 'a'), { state: '{}' }));
+  await assertSucceeds(syncWrite(db, OWNER, { a: { state: '{}', version: 1 } }, counters({ a: 1 })));
   await assertSucceeds(getDoc(bucket(db, OWNER, 'a')));
+  await assertSucceeds(getDoc(versions(db, OWNER)));
   await assertSucceeds(getDocs(collection(db, 'users', OWNER, 'sync')));
 });
 
 test('only an approved guest syncs', async () => {
-  const sync = async (who) => {
-    const db = as(who);
-    await setDoc(bucket(db, people[who].uid), { state: '{}' });
-    await getDoc(bucket(db, people[who].uid));
+  const write = (who, n) => syncWrite(as(who), people[who].uid, { 0: { state: '{}', version: n } }, counters({ 0: n }));
+  const sync = async (who, n) => {
+    await write(who, n);
+    await getDoc(bucket(as(who), people[who].uid));
+    await getDoc(versions(as(who), people[who].uid));
   };
-  await assertFails(sync('ana'), 'no access document');
+  await assertFails(sync('ana', 1), 'no access document');
   await given({ 'access/ana-uid': status('pending') });
-  await assertFails(setDoc(bucket(as('ana'), 'ana-uid'), { state: '{}' }));
+  await assertFails(write('ana', 1));
   await assertFails(getDoc(bucket(as('ana'), 'ana-uid')));
+  await assertFails(getDoc(versions(as('ana'), 'ana-uid')));
+  await assertFails(setDoc(versions(as('ana'), 'ana-uid'), counters()));
   await given({ 'access/ana-uid': status('approved') });
-  await assertSucceeds(sync('ana'));
+  await assertSucceeds(sync('ana', 1));
   await given({ 'access/ana-uid': status('denied') });
   await assertFails(getDoc(bucket(as('ana'), 'ana-uid')), 'removed');
-  await assertFails(setDoc(bucket(as('ana'), 'ana-uid'), { state: '{}' }), 'removed');
+  await assertFails(getDoc(versions(as('ana'), 'ana-uid')), 'removed');
+  await assertFails(write('ana', 2), 'removed');
+  await assertFails(setDoc(versions(as('ana'), 'ana-uid'), counters({ 0: 9 })), 'removed');
 });
 
 test('nobody reads or writes anyone else\'s collection, the owner included', async () => {
   await given({
     'access/ana-uid': status('approved'),
     'access/ben-uid': status('approved'),
-    'users/ana-uid/sync/0': { state: '{"records":[]}' },
-    [`users/${OWNER}/sync/0`]: { state: '{"records":[]}' },
+    'users/ana-uid/sync/0': { state: '{"records":[]}', version: 1 },
+    'users/ana-uid/sync/versions': counters({ 0: 1 }),
+    [`users/${OWNER}/sync/0`]: { state: '{"records":[]}', version: 1 },
+    [`users/${OWNER}/sync/versions`]: counters({ 0: 1 }),
   });
+  const write = (db, uid) => syncWrite(db, uid, { 0: { state: '{}', version: 2 } }, counters({ 0: 2 }));
   await assertFails(getDoc(bucket(as('ben'), 'ana-uid')));
-  await assertFails(setDoc(bucket(as('ben'), 'ana-uid'), { state: '{}' }));
+  await assertFails(getDoc(versions(as('ben'), 'ana-uid')));
+  await assertFails(write(as('ben'), 'ana-uid'));
+  await assertFails(setDoc(versions(as('ben'), 'ana-uid'), counters({ 0: 5 })));
   await assertFails(getDocs(collection(as('ben'), 'users', 'ana-uid', 'sync')));
   await assertFails(getDoc(bucket(as('ana'), OWNER)));
-  await assertFails(setDoc(bucket(as('ana'), OWNER), { state: '{}' }));
+  await assertFails(write(as('ana'), OWNER));
   await assertFails(getDoc(bucket(as('owner'), 'ana-uid')));
-  await assertFails(setDoc(bucket(as('owner'), 'ana-uid'), { state: '{}' }));
+  await assertFails(getDoc(versions(as('owner'), 'ana-uid')));
+  await assertFails(write(as('owner'), 'ana-uid'));
   await assertFails(getDoc(bucket(stranger(), 'ana-uid')));
-  await assertFails(setDoc(bucket(stranger(), OWNER), { state: '{}' }));
+  await assertFails(write(stranger(), OWNER));
 });
 
-test('a sync document is one of 16 buckets with one state field, up to the size cap', async () => {
+test('a sync document is one of 16 buckets with one state field and its counter, up to the size cap', async () => {
   const db = as('owner');
-  await assertSucceeds(setDoc(bucket(db, OWNER, 'f'), { state: 'x'.repeat(LIMIT) }));
-  await assertFails(setDoc(bucket(db, OWNER, 'f'), { state: 'x'.repeat(LIMIT + 1) }));
-  await assertFails(setDoc(bucket(db, OWNER, 'g'), { state: '{}' }));
-  await assertFails(setDoc(bucket(db, OWNER, '10'), { state: '{}' }));
-  await assertFails(setDoc(bucket(db, OWNER, '0'), { state: '{}', extra: 1 }));
-  await assertFails(setDoc(bucket(db, OWNER, '0'), { state: 5 }));
+  const one = (id, data, n = 1) => syncWrite(db, OWNER, { [id]: data }, BUCKETS.includes(id) ? counters({ [id]: n }) : counters());
+  await assertSucceeds(one('f', { state: 'x'.repeat(LIMIT), version: 1 }));
+  await assertFails(one('f', { state: 'x'.repeat(LIMIT + 1), version: 2 }, 2));
+  await assertFails(one('g', { state: '{}', version: 1 }));
+  await assertFails(one('10', { state: '{}', version: 1 }));
+  await assertFails(one('0', { state: '{}', version: 1, extra: 1 }));
+  await assertFails(one('0', { state: 5, version: 1 }));
+  await assertFails(one('0', { state: '{}', version: '1' }));
+  await assertFails(one('0', { state: '{}', version: 1.5 }));
+  await assertFails(one('0', { version: 1 }));
   await assertFails(deleteDoc(bucket(db, OWNER, 'f')));
+  await assertFails(deleteDoc(versions(db, OWNER)));
+});
+
+test('a bucket write without a counter, from the app before counters existed, is refused', async () => {
+  const db = as('owner');
+  await assertFails(setDoc(bucket(db, OWNER, '3'), { state: '{}' }), 'with no version document');
+  await assertSucceeds(syncWrite(db, OWNER, { 3: { state: '{}', version: 1 } }, counters({ 3: 1 })));
+  await assertFails(setDoc(bucket(db, OWNER, '3'), { state: '{"records":[]}' }), 'with a version document');
+  await assertFails(runTransaction(db, async (t) => {
+    await t.get(bucket(db, OWNER, '3'));
+    t.set(bucket(db, OWNER, '3'), { state: '{"records":[]}' });
+  }), 'in a transaction, as the old app wrote');
+  await assertFails(updateDoc(bucket(db, OWNER, '3'), { state: '{"records":[]}' }), 'keeping the counter as it was');
+});
+
+test('a bucket\'s counter rises with each write, and the version document must rise with it', async () => {
+  const db = as('owner');
+  await assertSucceeds(syncWrite(db, OWNER, { 5: { state: 'a', version: 1 } }, counters({ 5: 1 })));
+  await assertFails(setDoc(bucket(db, OWNER, '5'), { state: 'b', version: 2 }), 'without the version document');
+  await assertFails(syncWrite(db, OWNER, { 5: { state: 'b', version: 1 } }, counters({ 5: 1 })), 'a counter that stays the same');
+  await assertFails(syncWrite(db, OWNER, { 5: { state: 'b', version: 2 } }, counters({ 5: 3 })), 'a version document that disagrees');
+  await assertFails(syncWrite(db, OWNER, { 5: { state: 'b', version: 2 } }, counters({ 5: 1, 6: 4 })), 'a version document that moves another bucket only');
+  await assertSucceeds(syncWrite(db, OWNER, { 5: { state: 'b', version: 2 }, 6: { state: 'c', version: 1 } }, counters({ 5: 2, 6: 1 })));
+  const stored = await getDoc(versions(db, OWNER));
+  assert.deepEqual(stored.data(), counters({ 5: 2, 6: 1 }));
+});
+
+test('a collection synced before counters existed takes its first counters', async () => {
+  await given({ [`users/${OWNER}/sync/2`]: { state: 'old' }, [`users/${OWNER}/sync/9`]: { state: 'old' } });
+  const db = as('owner');
+  await assertSucceeds(syncWrite(db, OWNER, { 2: { state: 'new', version: 1 } }, counters({ 2: 1 })));
+  await assertSucceeds(syncWrite(db, OWNER, { 9: { state: 'new', version: 1 } }, counters({ 2: 1, 9: 1 })));
+});
+
+test('the version document holds 16 whole counters that never go down', async () => {
+  const db = as('owner');
+  await assertFails(setDoc(versions(db, OWNER), { 0: 1 }), 'too few');
+  await assertFails(setDoc(versions(db, OWNER), { ...counters(), g: 0 }), 'an extra field');
+  await assertFails(setDoc(versions(db, OWNER), counters({ a: -1 })), 'below zero');
+  await assertFails(setDoc(versions(db, OWNER), counters({ a: 1.5 })), 'not whole');
+  await assertFails(setDoc(versions(db, OWNER), counters({ a: '1' })), 'not a number');
+  await assertSucceeds(setDoc(versions(db, OWNER), counters({ a: 4 })));
+  await assertFails(setDoc(versions(db, OWNER), counters({ a: 3 })), 'going down');
+  await assertFails(updateDoc(versions(db, OWNER), { a: 3 }), 'going down, as an update');
+  const { f, ...fifteen } = counters({ a: 4 });
+  await assertFails(setDoc(versions(db, OWNER), fifteen), 'losing a counter');
+  await assertSucceeds(setDoc(versions(db, OWNER), counters({ a: 4 })), 'staying the same');
+  await assertSucceeds(setDoc(versions(db, OWNER), counters({ a: 9, b: 2 })), 'going up');
+  await assertFails(deleteDoc(versions(db, OWNER)));
 });
 
 test('everything else is denied', async () => {

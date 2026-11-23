@@ -4,3 +4,4 @@ scripts/discography-speed/data/cache/
 scripts/discography-speed/data/raw/
 firestore-debug.log
 firebase-debug.log
+package-lock.json
