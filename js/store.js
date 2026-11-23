@@ -1,25 +1,42 @@
 /*
  * Record storage and matching helpers.
- * Loaded as a plain script in the browser (window.RC.store), after js/xlsx.js, and with require() in Node tests.
+ * Loaded as a plain script in the browser (window.Alexandria.store), after js/xlsx.js, and with require() in Node tests.
  */
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const api = factory(node ? require('./xlsx.js') : root.RC.xlsx);
+  const api = factory(node ? require('./xlsx.js') : root.Alexandria.xlsx);
   if (node) module.exports = api;
-  else (root.RC = root.RC || {}).store = api;
+  else (root.Alexandria = root.Alexandria || {}).store = api;
 })(typeof self !== 'undefined' ? self : this, function (xlsx) {
   'use strict';
 
   const KEYS = {
-    records: 'recordcatalog.records.v1',
-    wishlist: 'recordcatalog.wishlist.v1',
-    confirmed: 'recordcatalog.confirmed.v2', // releases you've confirmed came out on vinyl, and when (v2: with times)
-    deleted: 'recordcatalog.deleted.v1', // what you deleted and when, so syncing another device's copy doesn't bring it back
-    discographies: 'recordcatalog.discographies.v6', // v6: vinyl from browsing official releases, not search
-    prefs: 'recordcatalog.prefs.v1',
+    records: 'alexandria.records.v1',
+    wishlist: 'alexandria.wishlist.v1',
+    confirmed: 'alexandria.confirmed.v2', // releases you've confirmed came out on vinyl, and when (v2: with times)
+    deleted: 'alexandria.deleted.v1', // what you deleted and when, so syncing another device's copy doesn't bring it back
+    discographies: 'alexandria.discographies.v6', // v6: vinyl from browsing official releases, not search
+    prefs: 'alexandria.prefs.v1',
   };
-  const OLD_KEYS = ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4', 'recordcatalog.discographies.v5'];
-  const OLD_CONFIRMED = 'recordcatalog.confirmed.v1';
+  // Keys saved before the app was called Alexandria. createStore moves each renamed one to its
+  // current key and deletes the rest. These are the only places the old names may appear.
+  const PRE_ALEXANDRIA_KEYS = {
+    renamed: [
+      ['recordcatalog.records.v1', KEYS.records],
+      ['recordcatalog.wishlist.v1', KEYS.wishlist],
+      ['recordcatalog.confirmed.v2', KEYS.confirmed],
+      ['recordcatalog.deleted.v1', KEYS.deleted],
+      ['recordcatalog.discographies.v6', KEYS.discographies],
+      ['recordcatalog.prefs.v1', KEYS.prefs],
+      // Copies that couldn't be read, kept aside by loadList.
+      ['recordcatalog.records.v1.unreadable', `${KEYS.records}.unreadable`],
+      ['recordcatalog.wishlist.v1.unreadable', `${KEYS.wishlist}.unreadable`],
+    ],
+    // Confirmations saved as a plain list, before they had times. loadConfirmed upgrades them.
+    confirmedV1: 'recordcatalog.confirmed.v1',
+    // Discography caches nothing reads anymore.
+    dropped: ['recordcatalog.discographies.v1', 'recordcatalog.discographies.v2', 'recordcatalog.discographies.v3', 'recordcatalog.discographies.v4', 'recordcatalog.discographies.v5'],
+  };
 
   // Vinyl only. Records saved earlier as CD or Cassette keep that format until you change it.
   const FORMATS = ['LP', 'Double LP', 'EP', '45', '10"', '12" single', 'Box set', 'Other'];
@@ -558,14 +575,14 @@
       throw new Error("That isn't a valid backup.");
     }
     const records = Array.isArray(data) ? data : data && data.records;
-    if (!Array.isArray(records)) throw new Error("That doesn't look like a Record Catalog backup.");
+    if (!Array.isArray(records)) throw new Error("That doesn't look like an Alexandria backup.");
     const list = (value) => (Array.isArray(value) ? value : []);
     return { records, wishlist: list(data.wishlist), vinylConfirmed: list(data.vinylConfirmed) };
   }
 
   /*
    * Reads pasted text or what fileContent read from a file, whichever kind it is:
-   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          a Record Catalog backup, for importBackup
+   *   { kind: 'backup', records, wishlist, vinylConfirmed }                          an Alexandria backup, for importBackup
    *   { kind: 'table', app, columns, ignored, items, unreadable, notVinyl, merged }  a spreadsheet whose first row names the columns
    *   { kind: 'list', items, unreadable, merged }                                    one "Artist - Title" per line
    * Items are { artist, title, year, format, notes }. A null format means the import didn't name one.
@@ -857,16 +874,36 @@
       }
     }
 
+    // Moves each renamed key's saved text as is, without notifying, so the move doesn't count as a
+    // change to sync. When both keys exist, the current one is newer and the old one is dropped.
+    // Running it again finds nothing to move.
+    function renameOldKeys() {
+      for (const [old, current] of PRE_ALEXANDRIA_KEYS.renamed) {
+        try {
+          const saved = backend.getItem(old);
+          if (saved == null) continue;
+          if (backend.getItem(current) == null) backend.setItem(current, saved);
+          backend.removeItem(old);
+        } catch (ignored) {}
+      }
+    }
+
     // Confirmations saved as a plain list, before they had times, move to the new key with unknown times.
     function loadConfirmed() {
       const saved = read(KEYS.confirmed, null);
-      if (saved) return timesFrom(saved);
-      const old = read(OLD_CONFIRMED, null);
+      if (saved) {
+        // A plain list left beside it was upgraded into it already.
+        try {
+          backend.removeItem(PRE_ALEXANDRIA_KEYS.confirmedV1);
+        } catch (ignored) {}
+        return timesFrom(saved);
+      }
+      const old = read(PRE_ALEXANDRIA_KEYS.confirmedV1, null);
       const times = new Map((Array.isArray(old) ? old : []).filter((key) => typeof key === 'string').map((key) => [key, UNKNOWN_TIME]));
       if (Array.isArray(old)) {
         try {
           write(KEYS.confirmed, timesObject(times));
-          backend.removeItem(OLD_CONFIRMED);
+          backend.removeItem(PRE_ALEXANDRIA_KEYS.confirmedV1);
         } catch (ignored) {}
       }
       return times;
@@ -883,8 +920,9 @@
       confirmed = loadConfirmed();
       deleted = markersFrom(read(KEYS.deleted, null));
     }
+    renameOldKeys();
     load();
-    for (const key of OLD_KEYS) {
+    for (const key of PRE_ALEXANDRIA_KEYS.dropped) {
       try {
         backend.removeItem(key);
       } catch (ignored) {}
@@ -1105,7 +1143,7 @@
 
       exportJSON() {
         return JSON.stringify({
-          app: 'recordcatalog', version: 3, exportedAt: now(), records, wishlist: wishes, vinylConfirmed: [...confirmed.keys()],
+          app: 'alexandria', version: 3, exportedAt: now(), records, wishlist: wishes, vinylConfirmed: [...confirmed.keys()],
         }, null, 2);
       },
 

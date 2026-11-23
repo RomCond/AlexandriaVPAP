@@ -1,12 +1,12 @@
 /*
  * Reads the sheets of an Excel .xlsx file as rows of cell text, with no library. An .xlsx file is a
  * zip archive of XML files; the browser's DecompressionStream unzips them.
- * Loaded as a plain script in the browser (window.RC.xlsx) and with require() in Node tests.
+ * Loaded as a plain script in the browser (window.Alexandria.xlsx) and with require() in Node tests.
  */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else (root.RC = root.RC || {}).xlsx = api;
+  else (root.Alexandria = root.Alexandria || {}).xlsx = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 

@@ -79,7 +79,7 @@ async function pick(browser, app, cover, condition) {
     ...(condition.color ? { coverColor: 'rgb(120 80 60)' } : {}),
   };
   await context.addInitScript((r) => {
-    if (!localStorage.getItem('recordcatalog.records.v1')) localStorage.setItem('recordcatalog.records.v1', JSON.stringify([r]));
+    if (!localStorage.getItem('alexandria.records.v1')) localStorage.setItem('alexandria.records.v1', JSON.stringify([r]));
   }, record);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
@@ -145,7 +145,7 @@ async function main() {
   const servers = {};
   for (const version of new Set(CONDITIONS.map((c) => c.version))) {
     if (REFS[version]) {
-      dirs[version] = fs.mkdtempSync(path.join(os.tmpdir(), `rc-${version}-`));
+      dirs[version] = fs.mkdtempSync(path.join(os.tmpdir(), `alexandria-${version}-`));
       execFileSync('sh', ['-c', `git -C "${ROOT}" archive ${REFS[version]} | tar -x -C "${dirs[version]}"`]);
     }
     servers[version] = serve(dirs[version] || ROOT);

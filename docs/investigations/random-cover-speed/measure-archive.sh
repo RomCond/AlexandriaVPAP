@@ -12,7 +12,7 @@
 set -uo pipefail
 passes="${PASSES:-1 2}"
 
-ua="recordcatalog-investigation/0.1"
+ua="alexandria-investigation/0.1"
 origin="http://localhost:8080"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

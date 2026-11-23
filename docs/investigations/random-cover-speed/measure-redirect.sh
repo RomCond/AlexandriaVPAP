@@ -8,7 +8,7 @@
 # Part 2 sends all sizes over one kept-alive connection (what later covers pay), at most 2 a second.
 set -euo pipefail
 
-ua="recordcatalog-investigation/0.1"
+ua="alexandria-investigation/0.1"
 fmt='%{http_code}\t%{time_appconnect}\t%{time_starttransfer}\t%{time_total}\t%{url_effective}\n'
 
 echo "# cold: code, tls_done_s, ttfb_s, total_s, url"

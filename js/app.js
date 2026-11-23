@@ -1,20 +1,20 @@
 /*
- * Record Catalog UI. Plain DOM, no framework, no build step.
- * Records live in localStorage through RC.store. Lookups go to MusicBrainz through RC.mb.
+ * Alexandria UI. Plain DOM, no framework, no build step.
+ * Records live in localStorage through Alexandria.store. Lookups go to MusicBrainz through Alexandria.mb.
  */
 (function () {
   'use strict';
 
-  const S = RC.store;
-  const mb = RC.mb;
-  const scanner = RC.scanner;
+  const S = Alexandria.store;
+  const mb = Alexandria.mb;
+  const scanner = Alexandria.scanner;
   const store = S.createStore(browserStorage());
 
   // ---------- Helpers ----------
 
   function browserStorage() {
     try {
-      const probe = '__recordcatalog_probe__';
+      const probe = '__alexandria_probe__';
       window.localStorage.setItem(probe, '1');
       window.localStorage.removeItem(probe);
       return window.localStorage;
@@ -1132,7 +1132,7 @@
 
   function exportBackup() {
     const blob = new Blob([store.exportJSON()], { type: 'application/json' });
-    const link = h('a', { href: URL.createObjectURL(blob), download: `record-catalog-${new Date().toISOString().slice(0, 10)}.json` });
+    const link = h('a', { href: URL.createObjectURL(blob), download: `alexandria-${new Date().toISOString().slice(0, 10)}.json` });
     document.body.append(link);
     link.click();
     link.remove();
@@ -1141,10 +1141,10 @@
 
   // ---------- Sync between devices ----------
 
-  // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
+  // Browser tests give the page a fake sync service in Alexandria.syncService. Otherwise sync runs on Firebase
   // once js/sync-config.js is filled in, and the header button stays hidden until then. Sync runs on
   // its own when the page opens, comes back into view or comes back online, and after changes.
-  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService, auto: RC.sync.browserEnvironment(window) });
+  const sync = Alexandria.sync.startSync(store, { config: Alexandria.syncConfig, service: Alexandria.syncService, auto: Alexandria.sync.browserEnvironment(window) });
 
   const SYNC_PROBLEMS = {
     notAllowed: () => "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.",
@@ -1333,12 +1333,12 @@
 
   // ---------- Importing ----------
 
-  // What the import dialog would add: a backup as RC.store.readImport reads it, or a list or spreadsheet
+  // What the import dialog would add: a backup as Alexandria.store.readImport reads it, or a list or spreadsheet
   // with the albums already in the collection taken out. Null when there's nothing to add.
   let importing = null;
 
   // The file being imported, shown by name in place of the paste box: { name, content } with what
-  // RC.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
+  // Alexandria.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
   let chosenFile = null;
 
   function chooseImportSource(file) {
@@ -1386,7 +1386,7 @@
     if (read.kind === 'backup') {
       const wishes = read.wishlist.length ? ` and ${read.wishlist.length} on your wishlist` : '';
       showImport(read.records.length || read.wishlist.length ? read : null, [
-        h('p', { class: 'import-count' }, `A Record Catalog backup with ${plural(read.records.length, 'record')}${wishes}.`),
+        h('p', { class: 'import-count' }, `An Alexandria backup with ${plural(read.records.length, 'record')}${wishes}.`),
         h('p', { class: 'muted small' }, 'Albums you already have are skipped.'),
       ]);
       return;

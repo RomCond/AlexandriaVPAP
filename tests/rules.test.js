@@ -27,7 +27,7 @@ let env;
 test.before(async () => {
   assert.equal(RULES.split('PASTE_YOUR_ACCOUNT_ID_HERE').length, 2, 'the committed rules hold the placeholder once, in isOwner()');
   env = await initializeTestEnvironment({
-    projectId: 'demo-record-catalog',
+    projectId: 'demo-alexandria',
     firestore: { rules: RULES.replace('PASTE_YOUR_ACCOUNT_ID_HERE', OWNER) },
   });
 });

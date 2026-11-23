@@ -11,7 +11,7 @@ const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const S = require('../js/store.js');
 const Sync = require('../js/sync.js');
 
-const PROJECT = 'demo-record-catalog';
+const PROJECT = 'demo-alexandria';
 const RULES = fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8');
 const accounts = {
   owner: { sub: 'google-owner', name: 'Site Owner', email: 'owner@example.com' },

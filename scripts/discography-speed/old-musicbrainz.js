@@ -9,7 +9,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else (root.RC = root.RC || {}).mb = api;
+  else (root.Alexandria = root.Alexandria || {}).mb = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 

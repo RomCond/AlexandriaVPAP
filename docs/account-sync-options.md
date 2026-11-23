@@ -10,12 +10,12 @@ Written 15 November 2026. Prices and limits come from web searches on that date.
 
 | State | Saved under | Syncs | Why |
 | --- | --- | --- | --- |
-| Records | `recordcatalog.records.v1` | Yes | This is the collection. |
-| Wishlist | `recordcatalog.wishlist.v1` | Yes | **Got it** moves a wish into the collection, so the two lists change together. |
-| Vinyl confirmations | `recordcatalog.confirmed.v1` | Yes | You typed them in, and nothing can rebuild them. Backups already carry them. |
+| Records | `alexandria.records.v1` | Yes | This is the collection. |
+| Wishlist | `alexandria.wishlist.v1` | Yes | **Got it** moves a wish into the collection, so the two lists change together. |
+| Vinyl confirmations | `alexandria.confirmed.v2` | Yes | You typed them in, and nothing can rebuild them. Backups already carry them. |
 | Pending lookups | The `pendingLookup` flag on each record, and the `lookup` preference | The flag syncs. The `lookup` preference stays. | The flag is part of the record, so the other device shows the record as still waiting. The `lookup` preference holds this device's import panel, with its progress and the records it could not match. |
-| Preferences | `recordcatalog.prefs.v1` | No | `collectionView`, `sort`, `addFormat`, `vinylOnly`, `discoTypes` and `smallRecords` set how you browse on one screen. A phone shows covers three across, and a PC may show the list. |
-| Discography cache | `recordcatalog.discographies.v5` | No | It is a copy of public MusicBrainz data. Each device fetches it again when needed, and it expires after a week. It is also the largest item in storage. |
+| Preferences | `alexandria.prefs.v1` | No | `collectionView`, `sort`, `addFormat`, `vinylOnly`, `discoTypes` and `smallRecords` set how you browse on one screen. A phone shows covers three across, and a PC may show the list. |
+| Discography cache | `alexandria.discographies.v6` | No | It is a copy of public MusicBrainz data. Each device fetches it again when needed, and it expires after a week. It is also the largest item in storage. |
 
 One preference could follow you. `smallRecords`, the **Include 45s and 10" records** setting, says what you collect rather than how you browse. It stays on each device by default, as the section on [two defaults you can change](#two-defaults-you-can-change) explains.
 

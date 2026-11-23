@@ -3,7 +3,7 @@
  * with the app's own Firebase calls. Run it with:
  *
  *   npx firebase emulators:exec --config tests/firebase.json --only firestore,auth \
- *     --project demo-record-catalog "node scripts/sync-reads/measure.js new"
+ *     --project demo-alexandria "node scripts/sync-reads/measure.js new"
  *
  * Pass `old` instead of `new` to measure the app and rules as they were before counters, taken from
  * git at OLD_REVISION. It prints one JSON line per account and scenario.
@@ -36,7 +36,7 @@ const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const S = require('../../js/store.js');
 
 const OLD_REVISION = '4c99473';
-const PROJECT = 'demo-record-catalog';
+const PROJECT = 'demo-alexandria';
 const mode = process.argv[2] === 'old' ? 'old' : 'new';
 const root = path.join(__dirname, '..', '..');
 const fromGit = (file) => execFileSync('git', ['show', `${OLD_REVISION}:${file}`], { cwd: root, encoding: 'utf8' });

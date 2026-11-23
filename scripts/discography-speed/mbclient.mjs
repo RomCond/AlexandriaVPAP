@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const UA = 'recordcatalogapp-dev/0.1';
+export const UA = 'alexandria-dev/0.1';
 export const GAP_MS = 1100;
 // Other agents share this machine's address, so 503s come in bursts. Wait them out patiently.
 const RETRY_WAITS_MS = [2000, 4000, 8000, 16000, 30000, 30000, 60000, 60000, 60000];
