@@ -18,7 +18,7 @@ Sync needs the app to be served over the web, such as from GitHub Pages, or from
 
 1. Go to [the Firebase console](https://console.firebase.google.com) and sign in with your Google account.
 2. Click **Create a project**. Some versions of the console call it **Add project**.
-3. Give the project a name, such as `record-catalog`.
+3. Give the project a name, such as `alexandria`.
 4. The app doesn't use Google Analytics. Turn it off.
 5. Click **Create project** and wait until the project is ready.
 

@@ -635,7 +635,105 @@ test('discographies cached under older rules are cleared', () => {
   for (const v of [1, 2, 3, 4, 5]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
   S.createStore(storage);
   for (const v of [1, 2, 3, 4, 5]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
-  assert.equal(S.KEYS.discographies, 'recordcatalog.discographies.v6');
+  assert.equal(S.KEYS.discographies, 'alexandria.discographies.v6');
+});
+
+// What the app saved before it was called Alexandria: the same state, under recordcatalog. keys.
+const PRE_ALEXANDRIA = {
+  'recordcatalog.records.v1': JSON.stringify([{ id: 'r1', artist: 'Can', title: 'Ege Bamyasi', year: 1972, format: 'LP', notes: '', addedAt: '2020-01-01T00:00:00.000Z', updatedAt: '2021-01-01T00:00:00.000Z' }]),
+  'recordcatalog.wishlist.v1': JSON.stringify([{ id: 'w1', artist: 'Neu!', title: 'Neu! 75', format: 'LP', notes: '', addedAt: '2020-02-01T00:00:00.000Z', updatedAt: '2020-02-01T00:00:00.000Z' }]),
+  'recordcatalog.confirmed.v2': JSON.stringify({ 'rg-a': '2022-01-01T00:00:00.000Z' }),
+  'recordcatalog.deleted.v1': JSON.stringify({ records: { gone: '2022-02-01T00:00:00.000Z' }, wishlist: {}, confirmed: {} }),
+  'recordcatalog.discographies.v6': JSON.stringify({ a1: { name: 'Can', groups: [], fetchedAt: Date.now() } }),
+  'recordcatalog.prefs.v1': JSON.stringify({ sort: 'artist', vinylOnly: false }),
+  'recordcatalog.records.v1.unreadable': '[{"id": broken',
+};
+const renamed = (old) => old.replace(/^recordcatalog\./, 'alexandria.');
+
+// Like localStorage, and it can list what it holds.
+function memoryStorageWith(entries) {
+  const data = new Map(Object.entries(entries));
+  return {
+    keys: () => [...data.keys()].sort(),
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => void data.set(key, String(value)),
+    removeItem: (key) => void data.delete(key),
+  };
+}
+const contents = (storage) => Object.fromEntries(storage.keys().map((key) => [key, storage.getItem(key)]));
+
+test('what was saved under the old recordcatalog. keys moves to the alexandria. keys unchanged', () => {
+  const storage = memoryStorageWith(PRE_ALEXANDRIA);
+  const store = S.createStore(storage);
+  for (const [old, value] of Object.entries(PRE_ALEXANDRIA)) {
+    assert.equal(storage.getItem(renamed(old)), value, `${renamed(old)} holds what ${old} held`);
+    assert.equal(storage.getItem(old), null, `${old} is gone`);
+  }
+  assert.deepEqual(store.all().map((r) => [r.title, r.updatedAt]), [['Ege Bamyasi', '2021-01-01T00:00:00.000Z']]);
+  assert.deepEqual(store.wishlist().map((w) => w.title), ['Neu! 75']);
+  assert.equal(store.confirmedByYou('rg-a'), true);
+  assert.deepEqual(store.syncState().deleted.records, { gone: '2022-02-01T00:00:00.000Z' });
+  assert.equal(store.getPref('sort', 'added'), 'artist');
+  assert.equal(store.getDiscography('a1').name, 'Can');
+});
+
+test('when both an old and a new key are saved, the new one is kept and the old one dropped', () => {
+  const storage = memoryStorageWith(PRE_ALEXANDRIA);
+  const newer = JSON.stringify([{ id: 'r2', artist: 'Faust', title: 'IV', format: 'LP', notes: '', addedAt: '2023-01-01T00:00:00.000Z', updatedAt: '2023-01-01T00:00:00.000Z' }]);
+  storage.setItem('alexandria.records.v1', newer);
+  const store = S.createStore(storage);
+  assert.equal(storage.getItem('alexandria.records.v1'), newer);
+  assert.equal(storage.getItem('recordcatalog.records.v1'), null);
+  assert.deepEqual(store.all().map((r) => r.title), ['IV']);
+});
+
+test('opening the app again after the move changes nothing', () => {
+  const storage = memoryStorageWith(PRE_ALEXANDRIA);
+  S.createStore(storage);
+  const after = contents(storage);
+  S.createStore(storage);
+  assert.deepEqual(contents(storage), after);
+  assert.ok(storage.keys().every((key) => key.startsWith('alexandria.')), storage.keys().join(', '));
+});
+
+test('old confirmations and old discography caches from before Alexandria are still upgraded and cleared', () => {
+  const storage = memoryStorageWith({ 'recordcatalog.confirmed.v1': JSON.stringify(['rg-a']) });
+  for (const v of [1, 2, 3, 4, 5]) storage.setItem(`recordcatalog.discographies.v${v}`, '{"a1":{"groups":[]}}');
+  const store = S.createStore(storage);
+  assert.equal(store.confirmedByYou('rg-a'), true);
+  assert.deepEqual(JSON.parse(storage.getItem('alexandria.confirmed.v2')), { 'rg-a': '1970-01-01T00:00:00.000Z' });
+  assert.equal(storage.getItem('recordcatalog.confirmed.v1'), null);
+  for (const v of [1, 2, 3, 4, 5]) assert.equal(storage.getItem(`recordcatalog.discographies.v${v}`), null);
+});
+
+test('a confirmed.v2 saved under the old name wins over a confirmed.v1 saved even earlier', () => {
+  const storage = memoryStorageWith({
+    'recordcatalog.confirmed.v1': JSON.stringify(['rg-old']),
+    'recordcatalog.confirmed.v2': JSON.stringify({ 'rg-new': '2022-01-01T00:00:00.000Z' }),
+  });
+  const store = S.createStore(storage);
+  assert.equal(store.confirmedByYou('rg-new'), true);
+  assert.equal(store.confirmedByYou('rg-old'), false);
+  assert.equal(storage.getItem('recordcatalog.confirmed.v2'), null);
+  assert.deepEqual(storage.keys(), ['alexandria.confirmed.v2']);
+});
+
+test('storage that refuses every call still opens, with nothing saved', () => {
+  const refuse = () => {
+    throw new Error('SecurityError');
+  };
+  const store = S.createStore({ getItem: refuse, setItem: refuse, removeItem: refuse });
+  assert.deepEqual(store.all(), []);
+});
+
+test('a backup made before Alexandria, or with no app name, still imports', () => {
+  const record = { artist: 'Can', title: 'Tago Mago' };
+  for (const app of ['recordcatalog', 'alexandria', undefined]) {
+    const target = S.createStore(S.memoryStorage());
+    const text = JSON.stringify({ app, version: 3, records: [record], wishlist: [], vinylConfirmed: [] });
+    assert.deepEqual(restore(target, text), { added: 1, skipped: 0, wishes: 0 }, `app: ${app}`);
+  }
+  assert.equal(JSON.parse(S.createStore(S.memoryStorage()).exportJSON()).app, 'alexandria');
 });
 
 test('categoryOf sorts release groups into filter buckets', () => {

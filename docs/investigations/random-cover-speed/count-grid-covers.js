@@ -24,13 +24,13 @@ async function main() {
     });
     await context.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
     await context.addInitScript((count) => {
-      if (localStorage.getItem('recordcatalog.records.v1')) return;
+      if (localStorage.getItem('alexandria.records.v1')) return;
       const records = [];
       for (let i = 0; i < count; i++) {
         records.push({ id: `r${i}`, artist: `Artist ${String(i).padStart(3, '0')}`, title: `Album ${i}`, year: 1970 + (i % 50), format: 'LP',
           notes: '', releaseGroupId: `rg-${i}`, addedAt: '2026-01-01T00:00:00.000Z' });
       }
-      localStorage.setItem('recordcatalog.records.v1', JSON.stringify(records));
+      localStorage.setItem('alexandria.records.v1', JSON.stringify(records));
     }, COUNT);
     const page = await context.newPage();
     await page.goto(`${PAGE}#collection`);

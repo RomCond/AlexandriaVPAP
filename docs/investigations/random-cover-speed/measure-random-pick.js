@@ -38,7 +38,7 @@ async function main() {
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
     await context.addInitScript((records) => {
-      if (!localStorage.getItem('recordcatalog.records.v1')) localStorage.setItem('recordcatalog.records.v1', JSON.stringify(records));
+      if (!localStorage.getItem('alexandria.records.v1')) localStorage.setItem('alexandria.records.v1', JSON.stringify(records));
       // Marks when the big cover's <img> goes into the page, to compare with when its request starts.
       new MutationObserver(() => {
         const img = document.querySelector('#spin-sleeve img');

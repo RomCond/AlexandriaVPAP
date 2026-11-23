@@ -2,13 +2,13 @@
  * Syncs the collection between devices: Google sign-in through Firebase, and a copy of the sync state
  * in Firestore that only its own account can read or write. The site's owner syncs, and so does each
  * person the owner approves. Nothing loads until js/sync-config.js is filled in. Loaded as a plain
- * script in the browser (window.RC.sync), after js/store.js, and with require() in Node tests.
+ * script in the browser (window.Alexandria.sync), after js/store.js, and with require() in Node tests.
  */
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const api = factory(node ? require('./store.js') : root.RC.store);
+  const api = factory(node ? require('./store.js') : root.Alexandria.store);
   if (node) module.exports = api;
-  else (root.RC = root.RC || {}).sync = api;
+  else (root.Alexandria = root.Alexandria || {}).sync = api;
 })(typeof self !== 'undefined' ? self : this, function (S) {
   'use strict';
 
@@ -151,7 +151,7 @@
           buckets.set(id, { state: text, version: counters[id] });
         }
         if ([...buckets.values()].some((bucket) => bucket.state.length > STATE_LIMIT)) {
-          throw Object.assign(new Error('The collection is too big to sync.'), { code: 'record-catalog/too-big' });
+          throw Object.assign(new Error('The collection is too big to sync.'), { code: 'alexandria/too-big' });
         }
         result = { merged, memory: { account, counters, hashes } };
         return { buckets, versions: buckets.size || !versions ? counters : null };
@@ -238,7 +238,7 @@
   const PROBLEMS = {
     'permission-denied': 'notAllowed',
     'resource-exhausted': 'quotaReached',
-    'record-catalog/too-big': 'tooBig',
+    'alexandria/too-big': 'tooBig',
     unavailable: 'offline',
     'auth/network-request-failed': 'offline',
     'auth/unauthorized-domain': 'domainNotAuthorized',
@@ -477,7 +477,7 @@
         return;
       }
       const code = error.code;
-      if (code === 'resource-exhausted' || code === 'record-catalog/too-big') {
+      if (code === 'resource-exhausted' || code === 'alexandria/too-big') {
         stop();
       } else if (code === 'permission-denied') {
         await recheck(state.problem);

@@ -9,7 +9,7 @@ const zlib = require('zlib');
 const CACHE_FILE = process.env.CACHE_FILE || path.join(__dirname, 'cache.json.gz');
 const GAP_MS = 3000;
 const WAITS_MS = [2000, 4000, 8000, 16000, 32000];
-const UA = 'recordcatalogapp-dev/0.1';
+const UA = 'alexandria-dev/0.1';
 
 let cache = {};
 if (fs.existsSync(CACHE_FILE)) cache = JSON.parse(zlib.gunzipSync(fs.readFileSync(CACHE_FILE)).toString('utf8'));

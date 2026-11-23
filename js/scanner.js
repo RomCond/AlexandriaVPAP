@@ -99,5 +99,5 @@
     }
   }
 
-  (window.RC = window.RC || {}).scanner = { supported, read };
+  (window.Alexandria = window.Alexandria || {}).scanner = { supported, read };
 })();

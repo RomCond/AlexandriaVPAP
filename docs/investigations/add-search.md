@@ -489,7 +489,7 @@ OFFLINE=1 SET=holdout node eval.js current smart smart+found-artist toggle:album
 node report.js summary current smart  # print a table; also: cases, matrix, detail
 ```
 
-Without `OFFLINE=1`, a missing reply is fetched one request at a time, 3 seconds apart, with the `recordcatalogapp-dev/0.1` User-Agent, and saved to `cache.json.gz`.
+Without `OFFLINE=1`, a missing reply is fetched one request at a time, 3 seconds apart, with the `alexandria-dev/0.1` User-Agent, and saved to `cache.json.gz`.
 
 The approaches run on the app's search code as it was before this work (commit `bf604df`), so "current" stays today's search. `node check-app.js` runs the app as it is now and checks its albums against the recorded smart results and its artist row against smart+found-artist. `SMALL=1` turns on 45s and 10" records and writes `results-small.json` and `results-holdout-small.json`. Replies are saved for smart and smart+found-artist only; other approaches would fetch.
 

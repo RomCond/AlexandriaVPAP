@@ -1,20 +1,20 @@
 /*
  * Alexandria UI. Plain DOM, no framework, no build step.
- * Records live in localStorage through RC.store. Lookups go to MusicBrainz through RC.mb.
+ * Records live in localStorage through Alexandria.store. Lookups go to MusicBrainz through Alexandria.mb.
  */
 (function () {
   'use strict';
 
-  const S = RC.store;
-  const mb = RC.mb;
-  const scanner = RC.scanner;
+  const S = Alexandria.store;
+  const mb = Alexandria.mb;
+  const scanner = Alexandria.scanner;
   const store = S.createStore(browserStorage());
 
   // ---------- Helpers ----------
 
   function browserStorage() {
     try {
-      const probe = '__recordcatalog_probe__';
+      const probe = '__alexandria_probe__';
       window.localStorage.setItem(probe, '1');
       window.localStorage.removeItem(probe);
       return window.localStorage;
@@ -1141,10 +1141,10 @@
 
   // ---------- Sync between devices ----------
 
-  // Browser tests give the page a fake sync service in RC.syncService. Otherwise sync runs on Firebase
+  // Browser tests give the page a fake sync service in Alexandria.syncService. Otherwise sync runs on Firebase
   // once js/sync-config.js is filled in, and the header button stays hidden until then. Sync runs on
   // its own when the page opens, comes back into view or comes back online, and after changes.
-  const sync = RC.sync.startSync(store, { config: RC.syncConfig, service: RC.syncService, auto: RC.sync.browserEnvironment(window) });
+  const sync = Alexandria.sync.startSync(store, { config: Alexandria.syncConfig, service: Alexandria.syncService, auto: Alexandria.sync.browserEnvironment(window) });
 
   const SYNC_PROBLEMS = {
     notAllowed: () => "Firebase didn't allow that. If you run this site, check that its access rules are published with your account id.",
@@ -1333,12 +1333,12 @@
 
   // ---------- Importing ----------
 
-  // What the import dialog would add: a backup as RC.store.readImport reads it, or a list or spreadsheet
+  // What the import dialog would add: a backup as Alexandria.store.readImport reads it, or a list or spreadsheet
   // with the albums already in the collection taken out. Null when there's nothing to add.
   let importing = null;
 
   // The file being imported, shown by name in place of the paste box: { name, content } with what
-  // RC.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
+  // Alexandria.store.fileContent read, or { name, problem } when it can't be read. Null while you paste.
   let chosenFile = null;
 
   function chooseImportSource(file) {

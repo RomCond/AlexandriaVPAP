@@ -46,7 +46,7 @@ So any faster design must not page through search results. There are two exact w
 
 ## How I measured
 
-The scripts are in `scripts/discography-speed/`. Every live call went out one at a time, at least 1.1 s apart, with `User-Agent: recordcatalogapp-dev/0.1`.
+The scripts are in `scripts/discography-speed/`. Every live call went out one at a time, at least 1.1 s apart, with `User-Agent: alexandria-dev/0.1`.
 
 - `measure-current.mjs` runs the app's own `getDiscography` against live MusicBrainz and records every request and release.
 - `complete-search.mjs` collects every vinyl and deluxe release by splitting each search until it fits on one page. This is the ground truth.

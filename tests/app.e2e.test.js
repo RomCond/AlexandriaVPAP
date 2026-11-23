@@ -253,7 +253,7 @@ async function openApp(browser, { setup, ...options } = {}) {
 }
 
 /*
- * A sync service that stands in for Firebase, given to the page as RC.syncService. It plays one
+ * A sync service that stands in for Firebase, given to the page as Alexandria.syncService. It plays one
  * Firebase project: each account keeps its own buckets, and access records decide who syncs, as
  * firestore.rules does, with fake.owner as the owner. `install(account)` sets up a browser context as
  * a device that signs in as that account. Every device installed from the same fake shares the
@@ -343,7 +343,7 @@ function fakeSyncService() {
         if (reply.error) throw Object.assign(new Error(`Fake sync: ${reply.error}`), { code: reply.error });
         return reply;
       };
-      window.RC = {
+      window.Alexandria = {
         syncService: {
           watchUser(callback) {
             watchers.push(callback);
@@ -762,7 +762,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
     await discoReady(page);
     assert.equal(await text(page, '#disco-progress-text'), 'You have 1 of 3');
     assert.deepEqual(mbCalls.slice(callsBefore).map((u) => u.pathname), ['/ws/2/artist', '/ws/2/release-group', '/ws/2/release']);
-    const linked = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.title === 'Dummy').artistId);
+    const linked = await page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')).find((r) => r.title === 'Dummy').artistId);
     assert.equal(linked, 'a-portishead');
 
     // Cached: coming back to Radiohead makes no new requests
@@ -783,7 +783,7 @@ test('add, browse, edit, shuffle and find missing records', { skip: !chromium &&
       const saved = JSON.parse(localStorage.getItem(key));
       saved['a-radiohead'].fetchedAt -= 10 * 24 * 60 * 60 * 1000;
       localStorage.setItem(key, JSON.stringify(saved));
-    }, 'recordcatalog.discographies.v6');
+    }, 'alexandria.discographies.v6');
     await page.selectOption('#disco-artist', { label: 'Portishead (1)' });
     await discoReady(page);
     let letRefreshThrough;
@@ -893,7 +893,7 @@ test('the random pick shows the 500px cover while the 1200px one loads', { skip:
     });
     await page.evaluate(() => {
       const record = (id, title, format) => ({ id, artist: 'Radiohead', title, year: 2000, format, releaseGroupId: `rg-${id}`, notes: '', addedAt: new Date(2024, 0, 1).toISOString() });
-      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
+      localStorage.setItem('alexandria.records.v1', JSON.stringify([record('kida', 'Kid A', 'Double LP'), record('okc', 'OK Computer', 'LP')]));
     });
     await page.goto(`${PAGE_URL}#random`);
     await page.reload();
@@ -913,7 +913,7 @@ test('the random pick shows the 500px cover while the 1200px one loads', { skip:
     // without reading the cover again.
     const tint = () => page.locator('#view-random .random-card').evaluate((el) => el.style.getPropertyValue('--album'));
     await page.waitForFunction(() => document.querySelector('#view-random .random-card').style.getPropertyValue('--album').startsWith('rgb('));
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).find((r) => r.id === 'kida').coverColor);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')).find((r) => r.id === 'kida').coverColor);
     assert.equal(saved, await tint());
     await page.reload();
     const colorReads = calls(250);
@@ -949,13 +949,13 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
   try {
     const { context, page, errors, mbCalls } = await openApp(browser, { viewport: { width: 420, height: 900 } });
     await page.evaluate(() => {
-      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+      localStorage.setItem('alexandria.records.v1', JSON.stringify([{
         id: 'bends', artist: 'Radiohead', artistId: 'a-radiohead', title: 'The Bends', year: 1995, releaseGroupId: 'rg-bends',
         format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
       }]));
     });
     await page.reload();
-    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')));
     const byTitle = async () => Object.fromEntries((await records()).map((r) => [r.title, r]));
 
     await page.click('#import-btn');
@@ -1012,10 +1012,10 @@ test('imports a typed list and looks the records up', { skip: !chromium && 'play
 
     // Undo takes the whole import back, and puts back the wishes it ticked off
     await page.evaluate(() => {
-      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
+      localStorage.setItem('alexandria.wishlist.v1', JSON.stringify([{ id: 'wish-third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '' }]));
     });
     await page.reload();
-    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.wishlist.v1')).map((w) => w.title));
+    const wishes = () => page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.wishlist.v1')).map((w) => w.title));
     await page.click('#import-btn');
     await page.fill('#import-form [name=text]', 'Portishead - Third\nPortishead - Portishead');
     await page.click('#import-submit');
@@ -1048,7 +1048,7 @@ test('two tabs open at once keep both their changes', { skip: !chromium && 'play
     await first.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
     await first.reload();
     assert.equal(await text(first, '#nav-count'), '2');
-    const saved = await first.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    const saved = await first.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')).map((record) => record.title).sort());
     assert.deepEqual(saved, ['Aja', 'OK Computer']);
 
     assert.deepEqual(errors, []);
@@ -1062,7 +1062,7 @@ test('two tabs open at once keep both their changes', { skip: !chromium && 'play
 const syncConfigFilledIn = (() => {
   const sandbox = { self: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'sync-config.js'), 'utf8'), sandbox);
-  return require('../js/sync.js').isConfigured(sandbox.self.RC.syncConfig);
+  return require('../js/sync.js').isConfigured(sandbox.self.Alexandria.syncConfig);
 })();
 
 test('sync stays hidden and loads nothing from Firebase until it is set up', { skip: (!chromium && 'playwright is not installed') || (syncConfigFilledIn && 'js/sync-config.js is filled in') }, async () => {
@@ -1086,7 +1086,7 @@ test('enabled: false hides sync and calls nothing, even when it is set up', { sk
       // Stands in for a filled-in js/sync-config.js with enabled set as given.
       const filledIn = (context) => context.addInitScript((on) => {
         let config;
-        Object.defineProperty(window.RC, 'syncConfig', {
+        Object.defineProperty(window.Alexandria, 'syncConfig', {
           get: () => config,
           set: (value) => {
             config = { ...value, apiKey: 'key', authDomain: 'example.firebaseapp.com', projectId: 'example', appId: 'app', enabled: on };
@@ -1094,7 +1094,7 @@ test('enabled: false hides sync and calls nothing, even when it is set up', { sk
         });
       }, enabled);
       const { context, page, errors, firebaseCalls } = await openApp(browser, { setup: async (c) => { await fake.install()(c); await filledIn(c); } });
-      assert.equal(await page.evaluate(() => RC.syncConfig.enabled), enabled);
+      assert.equal(await page.evaluate(() => Alexandria.syncConfig.enabled), enabled);
       assert.equal(await page.locator('#sync-button').isVisible(), enabled, `button shown when enabled is ${enabled}`);
       if (!enabled) assert.deepEqual(fake.calls, []);
       assert.deepEqual(firebaseCalls, []);
@@ -1132,7 +1132,7 @@ test('two devices sync their collections after signing in', { skip: !chromium &&
 
     await pc.page.click('#sync-now');
     await pc.page.locator('#nav-count', { hasText: '2' }).waitFor({ timeout: 5000 });
-    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')).map((record) => record.title).sort());
     assert.deepEqual(await titles(pc.page), ['Aja', 'Tago Mago']);
     assert.deepEqual(await titles(phone.page), ['Aja', 'Tago Mago']);
 
@@ -1191,7 +1191,7 @@ test('a guest asks for access, the owner approves, and the guest syncs only thei
     await ana.page.click('#sync-check');
     await ana.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
     assert.equal(await syncName(ana.page), 'Sync: synced just now');
-    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')).map((record) => record.title).sort());
+    const titles = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')).map((record) => record.title).sort());
     assert.deepEqual(await titles(ana.page), ['Tago Mago'], "Ana doesn't get the owner's records");
     await owner.page.click('#sync-now');
     await owner.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
@@ -1478,13 +1478,13 @@ test('imports spreadsheets saved as Excel or CSV, and says what to do with a Num
   try {
     const { context, page, errors } = await openApp(browser, { viewport: { width: 420, height: 900 } });
     await page.evaluate(() => {
-      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([{
+      localStorage.setItem('alexandria.records.v1', JSON.stringify([{
         id: 'dummy', artist: 'Portishead', artistId: 'a-portishead', title: 'Dummy', year: 1994, releaseGroupId: 'rg-dummy',
         format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 0, 1).toISOString(),
       }]));
     });
     await page.reload();
-    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('recordcatalog.records.v1')));
+    const records = () => page.evaluate(() => JSON.parse(localStorage.getItem('alexandria.records.v1')));
 
     assert.equal(await page.locator('.import-open:visible').count(), 1, 'one Import button under the collection');
     await page.click('#import-btn');
@@ -1846,19 +1846,19 @@ test('fits a phone screen in light and dark mode', { skip: !chromium && 'playwri
         ].map(([artist, artistId, title, year, releaseGroupId, format], i) => ({
           id: `r${i}`, artist, artistId, title, year, releaseGroupId, format, notes: '', releaseId: null, addedAt: new Date(2024, 0, i + 1).toISOString(),
         }));
-        localStorage.setItem('recordcatalog.records.v1', JSON.stringify(records));
-        localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([{
+        localStorage.setItem('alexandria.records.v1', JSON.stringify(records));
+        localStorage.setItem('alexandria.wishlist.v1', JSON.stringify([{
           id: 'w1', artist: 'Radiohead', artistId: 'a-radiohead', title: 'Amnesiac', year: 2001, releaseGroupId: 'rg-amnesiac',
           format: 'LP', notes: '', releaseId: null, addedAt: new Date(2024, 1, 1).toISOString(),
         }]));
       });
       // A long collection gets the A to Z down the side; tapping a letter scrolls to it
       await page.evaluate(() => {
-        const records = JSON.parse(localStorage.getItem('recordcatalog.records.v1'));
+        const records = JSON.parse(localStorage.getItem('alexandria.records.v1'));
         for (let i = 0; i < 40; i++) {
           records.push({ id: `x${i}`, artist: `${'ABCDEFGHJKLMNOPRSTW'[i % 19]}rtist ${i}`, title: `Album ${i}`, year: 1970 + i, format: 'LP', notes: '', addedAt: new Date(2023, 0, 1).toISOString() });
         }
-        localStorage.setItem('recordcatalog.records.v1', JSON.stringify(records));
+        localStorage.setItem('alexandria.records.v1', JSON.stringify(records));
       });
       await page.reload();
       assert.ok(await page.locator('#az-rail').isVisible());
@@ -1886,6 +1886,40 @@ test('fits a phone screen in light and dark mode', { skip: !chromium && 'playwri
       assert.deepEqual(errors, []);
       await context.close();
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a collection saved before the app was called Alexandria opens, under the new keys', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const seedOldKeys = (context) => context.addInitScript(() => {
+      if (sessionStorage.getItem('seeded')) return;
+      sessionStorage.setItem('seeded', '1');
+      localStorage.clear();
+      localStorage.setItem('recordcatalog.records.v1', JSON.stringify([
+        { id: 'okc', artist: 'Radiohead', title: 'OK Computer', year: 1997, format: 'LP', notes: '', addedAt: '2024-01-01T00:00:00.000Z', updatedAt: '2024-01-01T00:00:00.000Z' },
+      ]));
+      localStorage.setItem('recordcatalog.wishlist.v1', JSON.stringify([
+        { id: 'third', artist: 'Portishead', title: 'Third', format: 'LP', notes: '', addedAt: '2024-02-01T00:00:00.000Z', updatedAt: '2024-02-01T00:00:00.000Z' },
+      ]));
+    });
+    const { context, page, errors } = await openApp(browser, { setup: seedOldKeys });
+    await openTab(page, 'collection');
+    assert.deepEqual(await page.locator('#collection-list .tile-title').allTextContents(), ['OK Computer']);
+    await openTab(page, 'wishlist');
+    assert.deepEqual(await page.locator('#collection-list .record-title').allTextContents(), ['Third']);
+
+    const saved = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map((key) => [key, JSON.parse(localStorage.getItem(key))])));
+    assert.deepEqual(saved['alexandria.records.v1'].map((r) => [r.title, r.updatedAt]), [['OK Computer', '2024-01-01T00:00:00.000Z']]);
+    assert.deepEqual(saved['alexandria.wishlist.v1'].map((w) => w.title), ['Third']);
+    assert.deepEqual(Object.keys(saved).filter((key) => key.startsWith('recordcatalog.')), [], 'the old keys are gone');
+
+    await page.reload();
+    assert.deepEqual(await page.locator('#collection-list .record-title').allTextContents(), ['Third'], 'still there after a reload');
+    assert.deepEqual(errors, []);
+    await context.close();
   } finally {
     await browser.close();
   }

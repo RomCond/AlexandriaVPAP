@@ -6,7 +6,7 @@
  * These values are public by design. Anyone who opens the site can read them. The access rules in
  * firestore.rules, published in the Firebase console, are what keep your collection private.
  */
-(self.RC = self.RC || {}).syncConfig = {
+(self.Alexandria = self.Alexandria || {}).syncConfig = {
   enabled: true,
   apiKey: 'AIzaSyDQLLkBfpRRbvI1FlTlOgL5klQFyZq8m2w',
   authDomain: 'alexandriavpap.firebaseapp.com',
