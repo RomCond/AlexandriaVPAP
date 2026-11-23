@@ -60,11 +60,35 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     return size;
   }
 
+  // The first snapshot from the server through the app's listener, or the error that ends it.
+  const firstVersions = () => new Promise((resolve, reject) => {
+    let stop = null;
+    let result = null;
+    const finish = (fn, value) => {
+      result = () => fn(value);
+      if (stop) {
+        stop();
+        result();
+      }
+    };
+    stop = service.watchVersions((versions, meta) => {
+      if (!meta.fromCache && !result) finish(resolve, { versions, meta });
+    }, (error) => !result && finish(reject, error));
+    if (result) {
+      stop();
+      result();
+    }
+  });
+
+  let live = null;
   try {
     store.add({ artist: 'Steely Dan', title: 'Aja' });
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.people, sync.state.problem], ['owner', [], null]);
     assert.equal(await bucketsOf(ownerId), 1, 'one record fills one bucket');
+    const seen = await firstVersions();
+    assert.equal(Object.values(seen.versions).filter((n) => n === 1).length, 1, 'the owner listens, and sees the one bucket written');
+    assert.deepEqual(seen.meta, { fromCache: false, hasPendingWrites: false });
 
     const ana = await as('ana');
     const anaId = ana.user.id;
@@ -74,6 +98,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.problem, await bucketsOf(anaId)], ['pending', null, 0]);
     await assert.rejects(service.exchange(nothing), { code: 'permission-denied' });
+    await assert.rejects(firstVersions(), { code: 'permission-denied' }, 'a pending guest cannot listen');
 
     await as('ben');
     await sync.requestAccess();
@@ -93,6 +118,7 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.problem], ['approved', null]);
     assert.ok((await bucketsOf(anaId)) > 0, 'an approved guest stores a collection');
+    assert.ok((await firstVersions()).versions, 'an approved guest listens');
 
     await as('owner');
     await sync.decide(anaId, 'denied');
@@ -103,7 +129,45 @@ test('the owner approves and removes a guest, through the app\'s own Firebase ca
     await sync.syncNow();
     assert.deepEqual([sync.state.access, sync.state.problem], ['denied', null]);
     await assert.rejects(service.exchange(nothing), { code: 'permission-denied' });
+    await assert.rejects(firstVersions(), { code: 'permission-denied' }, 'a removed guest cannot listen');
+
+    // Live updates through Firebase's own listener: a device with automatic syncing takes in what
+    // another device writes, with no tap, and its own writes coming back sync nothing.
+    await as('owner');
+    const quiet = () => {};
+    const auto = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id), online: () => true, onOnline: quiet, onOffline: quiet, onVisible: quiet };
+    const open = S.createStore(S.memoryStorage());
+    live = Sync.startSync(open, { service, auto });
+    const until = async (check, what) => {
+      for (const end = Date.now() + 10000; !check(); await new Promise((resolve) => setTimeout(resolve, 50))) {
+        if (Date.now() > end) assert.fail(`timed out waiting until ${what}`);
+      }
+    };
+    await until(() => live.state.live && live.state.phase === 'idle' && live.state.syncedAt, 'the open device has synced and listens');
+    let syncs = 0;
+    let phase = live.state.phase;
+    live.onChange((state) => {
+      if (state.phase === 'syncing' && phase !== 'syncing') syncs += 1;
+      phase = state.phase;
+    });
+    const other = S.createStore(S.memoryStorage());
+    other.add({ artist: 'Faust', title: 'IV' });
+    const started = Date.now();
+    await Sync.syncOnce(other, service, ownerId);
+    await until(() => open.all().some((record) => record.title === 'IV'), 'the open device has the other device\'s record');
+    const took = Date.now() - started;
+    assert.ok(took < 3000, `it arrived in ${took} ms`);
+    assert.equal(syncs, 1);
+    open.add({ artist: 'Neu!', title: 'Neu!' });
+    await until(() => syncs === 2 && live.state.phase === 'idle' && !live.state.waiting, 'the open device has synced its own change');
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    assert.equal(syncs, 2, 'its own write came back and synced nothing');
+    await live.signOut();
+    assert.equal(live.state.live, false, 'signing out stops the listener');
   } finally {
+    // Signing out through a session that listens stops its listener first. The emulator keeps a
+    // listener that outlives its sign-in, and then fails to clear the database for the next file.
+    if (live) await live.signOut();
     await sync.signOut();
     await env.cleanup();
     await firestore.terminate(firestore.getFirestore(getApp()));

@@ -259,7 +259,9 @@ async function openApp(browser, { setup, ...options } = {}) {
  * a device that signs in as that account. Every device installed from the same fake shares the
  * project. Set `fail` to a Firebase error code to make every call after sign-in fail with it.
  * `install(account, { signedIn: true })` opens the page already signed in.
- * `calls` lists every call any device made.
+ * `calls` lists every call any device made. A device listens to its version document by asking for
+ * it with the serial number of the last one it got. The answer waits until there is a newer one, so
+ * each write reaches every listening device of that account at once.
  */
 const OWNER = { id: 'test-account-id', name: 'Site Owner', email: 'owner@example.com' };
 const ANA = { id: 'ana-account-id', name: 'Ana Lima', email: 'ana@example.com' };
@@ -267,6 +269,16 @@ const BEN = { id: 'ben-account-id', name: 'Ben Ortiz', email: 'ben@example.com' 
 
 function fakeSyncService() {
   const fake = { owner: OWNER, buckets: new Map(), versions: new Map(), access: new Map(), fail: null, calls: [] };
+  const serials = new Map();
+  const waiting = [];
+  const snapshot = (id) => ({ versions: fake.versions.get(id) || null, serial: serials.get(id) || 0 });
+  function wrote(id) {
+    serials.set(id, (serials.get(id) || 0) + 1);
+    for (const waiter of waiting.splice(0)) {
+      if (waiter.id === id) waiter.resolve(snapshot(id));
+      else waiting.push(waiter);
+    }
+  }
   const bucketsOf = (id) => fake.buckets.get(id) || fake.buckets.set(id, new Map()).get(id);
   // Each bucket is { state, version }, and the version document counts each bucket's writes, as in Firebase.
   fake.texts = (id) => [...bucketsOf(id).values()].map((bucket) => bucket.state);
@@ -287,8 +299,16 @@ function fakeSyncService() {
       const rises = Object.entries(arg.buckets).every(([id, bucket]) => bucket.version > ((bucketsOf(account.id).get(id) || {}).version || 0) && after && after[id] === bucket.version);
       if (!rises) return denied;
       for (const [id, bucket] of Object.entries(arg.buckets)) bucketsOf(account.id).set(id, bucket);
-      if (arg.versions) fake.versions.set(account.id, arg.versions);
+      if (arg.versions) {
+        fake.versions.set(account.id, arg.versions);
+        wrote(account.id);
+      }
       return {};
+    }
+    if (action === 'watch') {
+      if (!syncs) return denied;
+      if ((serials.get(account.id) || 0) !== arg) return snapshot(account.id);
+      return new Promise((resolve) => waiting.push({ id: account.id, resolve }));
     }
     if (action === 'list') return isOwner ? { people: [...fake.access.values()] } : denied;
     if (action === 'mine') return { access: mine || null };
@@ -337,6 +357,29 @@ function fakeSyncService() {
           async signOut() {
             user = null;
             tell();
+          },
+          // Asks for each newer version document in turn until stopped. A device that has never had one
+          // asks with -1, so the first answer comes at once, as Firebase's first snapshot does.
+          watchVersions(onVersions, onError) {
+            let on = true;
+            (async () => {
+              let serial = -1;
+              while (on) {
+                let reply;
+                try {
+                  reply = await call('watch', serial);
+                } catch (error) {
+                  if (on) onError(error);
+                  return;
+                }
+                if (!on) return;
+                serial = reply.serial;
+                onVersions(reply.versions, { fromCache: false, hasPendingWrites: false });
+              }
+            })();
+            return () => {
+              on = false;
+            };
           },
           async exchange(plan) {
             const { versions, buckets } = await call('read');
@@ -1251,7 +1294,7 @@ test('sync says what went wrong, with the account id for setting up the rules', 
   }
 });
 
-test('sync runs on its own: on opening, after changes, back in view and back online, until the quota runs out', { skip: !chromium && 'playwright is not installed' }, async () => {
+test('sync runs on its own: on opening, after changes, from other devices, back online, until the quota runs out', { skip: !chromium && 'playwright is not installed' }, async () => {
   const browser = await chromium.launch();
   try {
     const fake = fakeSyncService();
@@ -1286,11 +1329,20 @@ test('sync runs on its own: on opening, after changes, back in view and back onl
     assert.equal(writes(), before + 1);
     assert.ok(fake.texts(OWNER.id).some((state) => state.includes('Aja')), 'the change reached the fake project');
 
+    // The PC listens for changes, so the phone's record arrives with no tap and no switching back.
     await addByHand(phone.page, 'Faust', 'IV');
     await openSync(phone.page);
     await phone.page.click('#sync-now');
     await phone.page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
     await phone.page.click('#sync-close');
+    const liveReads = reads();
+    for (let i = 0; i < 50 && (await text(page, '#nav-count')) !== '3'; i++) {
+      await page.clock.runFor(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(await text(page, '#nav-count'), '3');
+    assert.equal(reads(), liveReads + 1, 'one sync took it in');
+    await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: synced just now');
     const showAgain = () => page.evaluate(() => {
       for (const state of ['hidden', 'visible']) {
         Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
@@ -1300,11 +1352,10 @@ test('sync runs on its own: on opening, after changes, back in view and back onl
     const quietReads = reads();
     await showAgain();
     await page.clock.runFor(100);
-    assert.equal(reads(), quietReads, 'coming back right after a sync costs nothing');
     await page.clock.runFor(30000);
     await showAgain();
     await page.clock.runFor(100);
-    await page.locator('#nav-count', { hasText: '3' }).waitFor({ timeout: 5000 });
+    assert.equal(reads(), quietReads, 'while it listens, coming back into view costs no sync');
 
     await context.setOffline(true);
     await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: offline');
@@ -1339,6 +1390,41 @@ test('sync runs on its own: on opening, after changes, back in view and back onl
     await page.locator('#sync-status', { hasText: 'Synced just now.' }).waitFor({ timeout: 5000 });
     assert.equal(await page.locator('#sync-problem').count(), 0);
     assert.ok(fake.texts(OWNER.id).some((state) => state.includes('Soon Over Babaluma')), 'Sync now sent the waiting changes');
+
+    assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
+    assert.deepEqual([...pc.errors, ...phone.errors], []);
+    await pc.context.close();
+    await phone.context.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a record added on one device shows up on another that is open, with no taps', { skip: !chromium && 'playwright is not installed' }, async () => {
+  const browser = await chromium.launch();
+  try {
+    const fake = fakeSyncService();
+    const pc = await openApp(browser, { setup: fake.install(OWNER, { signedIn: true }) });
+    const phone = await openApp(browser, { setup: fake.install(OWNER, { signedIn: true }), viewport: { width: 390, height: 844 } });
+    for (const { page } of [pc, phone]) await page.waitForFunction(() => document.querySelector('#sync-button').getAttribute('aria-label') === 'Sync: synced just now');
+    await openSync(pc.page);
+    assert.match(await text(pc.page, '#sync-auto'), /Changes from your other devices show up here within seconds\./);
+    await pc.page.click('#sync-close');
+    const exchanges = () => fake.calls.filter((call) => call === 'write').length;
+    const before = exchanges();
+
+    await addByHand(phone.page, 'Steely Dan', 'Aja');
+    const added = Date.now();
+    await pc.page.locator('#nav-count', { hasText: '1' }).waitFor({ timeout: 15000 });
+    const waited = Date.now() - added;
+    assert.ok(waited < 5000 + 3000, `the PC had it within a few seconds of the phone's sync (${waited} ms after the edit)`);
+    await openTab(pc.page, 'collection');
+    await pc.page.locator('#collection-list', { hasText: 'Aja' }).waitFor();
+    assert.equal(await syncName(pc.page), 'Sync: synced just now');
+    assert.equal(exchanges(), before + 2, 'the phone synced its change, and the PC synced once to take it in');
+
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    assert.equal(exchanges(), before + 2, "neither device syncs again from the other's echo or its own");
 
     assert.deepEqual([...pc.firebaseCalls, ...phone.firebaseCalls], []);
     assert.deepEqual([...pc.errors, ...phone.errors], []);

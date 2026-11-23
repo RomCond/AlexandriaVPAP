@@ -1271,10 +1271,13 @@
     owner: (state, busy) => [...syncControls(state, busy), peopleSections(state.people)],
   };
 
-  function syncControls({ phase, syncedAt }, busy) {
+  // `live` is on while the page listens for changes from other devices, so the line says only that.
+  function syncControls({ phase, syncedAt, live }, busy) {
     return [
       h('p', { id: 'sync-status' }, phase === 'syncing' ? 'Syncing…' : sentence(syncedWhen(syncedAt))),
-      h('p', { class: 'muted small', id: 'sync-auto' }, 'This device syncs on its own while the app is open.'),
+      h('p', { class: 'muted small', id: 'sync-auto' }, live
+        ? 'This device syncs on its own while the app is open. Changes from your other devices show up here within seconds.'
+        : 'This device syncs on its own while the app is open.'),
       h('div', { class: 'sync-actions' }, h('button', { type: 'button', class: 'primary', id: 'sync-now', disabled: busy, onclick: () => sync.syncNow() }, 'Sync now')),
     ];
   }
