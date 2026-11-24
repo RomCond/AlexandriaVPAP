@@ -401,7 +401,7 @@
     }
 
     let lastSynced = 0;
-    let failedLast = false; // the last step failed
+    let failedLast = false;
     async function syncStep() {
       const seen = changes;
       set({ phase: 'syncing' });
