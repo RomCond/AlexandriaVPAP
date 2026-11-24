@@ -399,7 +399,6 @@ function fakeSyncService() {
   return fake;
 }
 
-// Opens the sync dialog from the header.
 async function openSync(page) {
   await page.click('#sync-button');
   await page.locator('#sync-dialog[open]').waitFor();
