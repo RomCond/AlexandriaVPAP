@@ -955,8 +955,9 @@
       showDiscography({ name: artist.name, ...progress.discography, fetchedAt: Date.now() }, artist, true);
       discoStatus(progress.step === 'groups' ? 'Loading the rest of the discography' : 'Checking which releases came out on vinyl', progress);
     };
-    if (saved) setStatus('#artist-status', 'Checking MusicBrainz for changes…', 'busy');
-    else {
+    if (saved) {
+      setStatus('#artist-status', 'Checking MusicBrainz for changes…', 'busy');
+    } else {
       $('#disco-panel').hidden = true;
       setStatus('#artist-status', `Loading the discography for ${artist.name}…`, 'busy');
     }
@@ -1202,7 +1203,8 @@
   let confirmingSync = null;
 
   function personRow(person) {
-    const who = h('div', { class: 'sync-person-who' }, h('strong', {}, person.name || person.email), person.name ? h('span', { class: 'muted small' }, person.email) : null);
+    const name = person.name || person.email;
+    const who = h('div', { class: 'sync-person-who' }, h('strong', {}, name), person.name ? h('span', { class: 'muted small' }, person.email) : null);
     const busy = sync.state.phase !== 'idle';
     const decide = (status) => {
       confirmingSync = null;
@@ -1212,7 +1214,6 @@
       confirmingSync = id;
       renderSync();
     };
-    const name = person.name || person.email;
     const removing = person.status === 'approved';
     let actions;
     if (confirmingSync === person.id) {
