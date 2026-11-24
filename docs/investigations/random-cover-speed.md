@@ -117,7 +117,7 @@ In Chromium, through this sandbox's proxy, every cover request used HTTP/1.1 and
 
 Decode and sampling times use JPEGs generated in the page. They are not real covers, and a phone CPU is slower, perhaps 3 to 5 times (estimated).
 
-The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop metadata. The color read downloads a third of a 500px cover just to sample 32x32 pixels. Saving the color means this happens once per record.
+The 250px files are large for their size, 22 to 40 KB. Some carry Photoshop metadata. The color read downloads a third of a 500px cover only to sample 32x32 pixels. Saving the color means this happens once per record.
 
 | Cover | 250px | 500px | 1200px |
 | --- | --- | --- | --- |

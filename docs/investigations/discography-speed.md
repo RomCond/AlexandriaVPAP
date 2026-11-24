@@ -36,7 +36,7 @@ MusicBrainz search has no sort order. Results that tie on score come back in a d
 
 - Bowie's `date:[* TO *]` vinyl query had 500 results. Its 5 pages returned only 367 different releases. The first two pages shared 40. (measured)
 - In a live run of the app's own `getDiscography`, Bowie came back with 377 of the 491 vinyl releases that count (77%). 17 release groups got the wrong LP flag. With every type turned on, 16 lines that should show were missing. In the default view, one studio album wrongly said "Vinyl not confirmed". (measured)
-- The Beatles came back with 1,264 of 1,453 (87%). 9 wrong flags, 8 missing lines with every type on, one wrong label in the default view. (measured)
+- The Beatles came back with 1,264 of 1,453 (87%), with 9 wrong flags, 8 missing lines with every type on, and one wrong label in the default view. (measured)
 - Which releases go missing changes from run to run.
 
 So any faster design must not page through search results. There are two exact ways to get every release:

@@ -404,7 +404,7 @@ I wrote these 10 queries after the rules above were final and ran them once. Not
 
 ## Where each one wins and loses
 
-**Re-ranking by pressings** is the biggest gain for the least work. It changes no query and makes no extra call, and takes today's search from 15 to 19. It fixes "rumours", "radiohead kid", "bowie low" and "radiohed ok computer". The hit count is the same for any weight from 3 to 12, so 5 isn't a fine-tuned number. Its cost: it favors records with many pressings, so a new album can rank below an old one with the same name.
+**Re-ranking by pressings** is the biggest gain for the least work. It changes no query and makes no extra call, and takes today's search from 15 to 19. It fixes "rumours", "radiohead kid", "bowie low" and "radiohed ok computer". The hit count is the same for any weight from 3 to 12, so 5 isn't a fine-tuned number. The cost is that it favors records with many pressings, so a new album can rank below an old one with the same name.
 
 **Requiring every word** (allwords) fixes the mixed queries but is too strict. Every typo and the Weezer nickname fail outright, and it gets 16.
 
