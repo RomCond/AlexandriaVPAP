@@ -415,19 +415,9 @@ button.small {
 
 .toolbar {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-bottom: 8px;
-}
-
-.toolbar select { width: auto; }
-.toolbar.two { grid-template-columns: 1fr 1fr; }
-.toolbar.two select { width: 100%; }
-
-@media (max-width: 560px) {
-  .toolbar { grid-template-columns: 1fr 1fr; }
-  .toolbar input { grid-column: 1 / -1; }
-  .toolbar select { width: 100%; }
 }
 
 .inline-form {
@@ -819,7 +809,6 @@ details.card[open] > summary::before { content: "\2212"; }
   color: var(--accent-ink, #fff);
 }
 
-
 /* Collection / Wishlist switch at the top of the Collection tab */
 .segmented {
   display: flex;
@@ -882,7 +871,6 @@ button.wished {
   margin-left: -8px;
   padding: 2px 8px;
 }
-
 
 .data-tools {
   display: flex;
