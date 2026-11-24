@@ -125,8 +125,6 @@ async function appDiscography(artist, groups, releases) {
 
 // ---------- Splitting a search until every part fits on one page of 100 ----------
 
-const FORMAT_SPLIT = ['vinyl', '12vinyl', '7vinyl', '10vinyl'];
-
 // Requests to collect every release of a kind with no paging, halving year ranges from the full span
 // (the app's current shape), or starting from decades (what complete-search.mjs did live).
 function splitCost(releases, { kind = 'vinyl', terms, start = 'halving' } = {}) {
@@ -137,7 +135,7 @@ function splitCost(releases, { kind = 'vinyl', terms, start = 'halving' } = {}) 
   };
   const leaf = (part) => {
     // A year with more than 100: one query per format, then per country (estimated as 3 parts).
-    for (const format of kind === 'vinyl' ? (terms || FORMAT_SPLIT) : []) {
+    for (const format of kind === 'vinyl' ? (terms || VINYL_TERMS) : []) {
       if (count({ ...part, terms: [format] }) > 100) requests += 3;
     }
   };

@@ -112,7 +112,7 @@ async function main() {
     const all = evaluations.seen.slice();
     const sync = all.filter((e) => e.id.includes('/sync/'));
     const bucket = (e) => /\/sync\/[0-9a-f]$/.test(e.id);
-    const counts = {
+    return {
       denied: all.filter((e) => e.outcome !== 'allow').length,
       // Each read in the transaction.
       reads: sync.filter((e) => !e.inTransaction && e.method === 'get').length,
@@ -121,7 +121,6 @@ async function main() {
       verifies: sync.filter((e) => e.inTransaction && e.method === 'get').length,
       access: all.filter((e) => !e.id.includes('/sync/')).map((e) => `${e.method} ${e.id.split('/').slice(-2)[0]}`),
     };
-    return counts;
   }
 
   // What Firestore bills for one sync's transaction, as [fewest, most].
